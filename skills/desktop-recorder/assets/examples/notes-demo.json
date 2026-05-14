@@ -1,0 +1,44 @@
+{
+  "name": "notes_demo",
+  "format": "horizontal_16_9",
+  "window": { "width": 1440, "height": 900 },
+  "_comment": "Coords below are window-relative (coordinate_space:'window'). Got them from `deskagent inspect --window <id>` during exploration. Pipeline runs `deskagent record` in the background and `deskagent control --target-window <id> --background` for the take, so the user can keep working in another app for the entire run.",
+
+  "sections": {
+    "setup": [
+      { "action": "shell", "cmd": "open -a 'Notes'", "reason": "technical" },
+      { "action": "wait", "ms": 1500, "reason": "technical" },
+      { "action": "shell", "cmd": "osascript -e 'tell application \"System Events\" to tell process \"Notes\" to set position of window 1 to {80, 80}'" },
+      { "action": "shell", "cmd": "osascript -e 'tell application \"System Events\" to tell process \"Notes\" to set size of window 1 to {1440, 900}'" }
+    ],
+
+    "preflight": [
+      { "action": "inspect_required_text", "label": "New Note", "_doc": "deskagent inspect --window <id> --json | jq must contain a 'New Note' element" }
+    ],
+
+    "recording": [
+      { "action": "record_start" },
+
+      { "action": "click", "x": 132, "y": 86,
+        "intent": "New note",
+        "caption": "Capture an idea in seconds" },
+      { "action": "wait", "ms": 600, "reason": "technical" },
+
+      { "action": "type", "text": "Launch checklist" },
+      { "action": "key",  "combo": "return" },
+      { "action": "wait", "ms": 300, "reason": "technical" },
+
+      { "action": "type", "text": "- Record launch video\n- Cut Shorts version\n- Write copy\n- Schedule post" },
+      { "action": "wait", "ms": 1000, "reason": "viewer_readability" },
+
+      { "action": "key",  "combo": "cmd+s" },
+      { "action": "wait", "ms": 500, "reason": "technical" },
+
+      { "action": "record_stop" }
+    ],
+
+    "validate": [
+      { "action": "inspect_required_text", "label": "Launch checklist" }
+    ]
+  }
+}
