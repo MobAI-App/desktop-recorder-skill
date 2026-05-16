@@ -33,7 +33,7 @@ Pick one of three options. The agent should pick **A** by default and fall back 
 
 ```bash
 brew install mobai-app/tap/deskagent
-deskagent --version              # expect 0.1.0 or newer
+deskagent --version              # expect 0.2.0 or newer
 ```
 
 Pros: one command, auto-updates via `brew upgrade`.
@@ -54,7 +54,7 @@ chmod +x "$HOME/.local/bin/deskagent"
 deskagent --version
 ```
 
-Pros: no Homebrew needed; can pin a specific version with `LATEST=v0.1.0`.
+Pros: no Homebrew needed; can pin a specific version with `LATEST=v0.2.0`.
 Cons: manual `xattr` step (Gatekeeper marks downloaded binaries as quarantined); Apple Silicon only; no auto-updates.
 
 ### Option C — Build from source
@@ -136,7 +136,9 @@ The skill folder contains:
 ```
 SKILL.md             ← main agent instructions (auto-loaded by trigger phrases)
 references/          ← desktop.md, deskagent.md, timeline.md, editing.md
-scripts/             ← export_video.sh, add_highlights.js, generate_copy.js
+scripts/             ← add_highlights.js, add_zoom.js, add_captions.js,
+                       add_speedups.js, export_video.js, generate_copy.js,
+                       lib/screenplay.js (shared loader)
 assets/              ← examples + templates
 ```
 

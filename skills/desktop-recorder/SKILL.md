@@ -1,205 +1,275 @@
 ---
 name: desktop-recorder
-description: Use this skill when the user asks to record, create, produce, or export a screencast or demo video of a **desktop app or web app on macOS** — for launch, marketing, Product Hunt, social posts, landing-page videos, internal walkthroughs. Triggers on "record a screencast", "screen recording", "desktop app demo", "web app demo", "record this Mac app", "make a screencast", "marketing video for the app", "record my Mac screen", "record Chrome", "record Safari". Enforces an exploration-first workflow — explore → script → dry-run → record → edit/export — and produces a deterministic JSON script, native ScreenCaptureKit recording via `deskagent`, timeline metadata, captions, click highlights, and upload copy. macOS only. For mobile (iOS/Android) demos, use the sibling `mobile-recorder-skill` instead.
+description: Use when the user asks to record / produce / export a screencast or demo video of a macOS desktop or web app — for launch, marketing, social posts, landing pages, internal walkthroughs. Triggers on "record a screencast", "screen recording", "desktop app demo", "web app demo", "record this Mac app", "make a screencast", "marketing video for the app", "record Chrome / Safari". Enforces explore → script → dry-run → record → export. macOS only. For mobile demos use the sibling `mobile-recorder-skill`.
 ---
 
 # Desktop Recorder
 
-## Promise
+Built on `deskagent` (ScreenCaptureKit + AXPress + Vision OCR). The
+agent never improvises during the final take — exploration is
+unconstrained, the recording is a deterministic JSON-script replay.
 
-Turn a prompt describing a desktop or web demo into a polished, reproducible screencast — plus a saved JSON script that can be re-recorded any time.
+## Pre-recording checklist — ASK, don't pick silently
 
-**macOS only.** Built on `deskagent` (ScreenCaptureKit recorder + AXPress driver + Vision OCR). The skill assumes `deskagent` is installed and on PATH; if not, point the user at `install.md` in the repo.
+Use `AskUserQuestion` (or plain text) before recording. State defaults
+explicitly so the user can shrug and accept.
 
-## The golden rule
+| Decision | Default if user shrugs |
+|---|---|
+| **Backdrop** `none / dark / light / color:RRGGBB / image:PATH` | `dark` |
+| **Padding + corner radius** | `--padding 60 --corner-radius 24` (or `0,0` for raw capture) |
+| **Layout** for multi-source: `auto / side-by-side / grid / stack` | `auto` |
+| **State-verification level** | `standard` (preflight + fingerprint at dry-run boundary) |
+| **Which apps may be driven** | Whichever the user named; never silently click into others |
 
-**Never improvise during the final recording.**
+## The 6 rules
 
-Correct flow:
+### 1. Explore first
 
-```
-explore → script → dry-run → record → edit/export
-```
+Tools allowed during exploration only:
 
-Wrong flow (produces ugly, glitchy video):
+- `deskagent list --json` → window picking
+- `deskagent inspect --window $ID` → element coords (AX + OCR)
+- `deskagent assert --window $ID --label X` → cheap yes/no probe
+- `deskagent screenshot --window $ID` → visual reference
+- Trial `deskagent control` runs against the live UI
 
-```
-start recording → observe → think → click → observe → think → click
-```
+Collect: click coords (window-relative), per-step waits, demo data,
+popups to normalize, the recording's window size (pin BEFORE
+inspecting), start/end states, captions.
 
-The agent is allowed to be slow and uncertain during exploration. Once recording starts, every action must be pre-decided and pre-timed.
+### 2. The screenplay — single source of truth
 
----
+One `screenplay.json` describes the demo end-to-end: scenes of actions
+to execute, plus per-scene editing directives (`caption`, `zoom`,
+`speed`) and a top-level `trim`. The recorder only sees
+`scenes[].actions[]`; editing scripts read the directives.
 
-## Core rules
-
-### Rule 1 — Explore first
-
-Before writing the script, explore the workflow end-to-end. Allowed tools during exploration:
-
-- `deskagent list --json` to find the target window
-- `deskagent inspect --window <id> --json` to discover element coords (AX walk + Vision OCR)
-- `screencapture -l <id>` for visual reference
-- `osascript` against the app's accessibility tree if it exposes one
-- Trial-and-error `deskagent control` runs against the live UI to confirm coords land
-
-Exploration must collect, at minimum:
-
-- the exact click sequence — coords from `deskagent inspect`, in window-relative space
-- per-action waits (technical vs. viewer-readability)
-- demo data to use
-- popups / cookie banners / first-run dialogs that need to be normalized in setup
-- the window size the recording will use (pin it before exploration so coords stay valid)
-- the start state and final state
-- moments that deserve a caption or callout
-
-### Rule 2 — Generate a deterministic JSON script
-
-The script is a JSON file with `setup`, `preflight`, `recording`, and `validate` sections. `setup` normalizes state off-camera; `recording` is the take, bracketed by `record_start` / `record_stop`. Every step in `recording` is one deterministic action with optional `intent` and `caption`.
-
-Coordinate space: prefer `coordinate_space: "window"` so the script keeps working when the user drags the window. Pair with `--target-window <id>` at run time.
-
-**No live observation inside `recording`.** No "observe → reason → click" loops. No conditionals. Each step is a single deterministic action that was decided during exploration.
-
-Timeline metadata: each `recording` step carries inline `intent` and `caption` fields. The runtime emits one `DemoTimelineEvent` per step.
-
-Recording is started and stopped **outside** the script. The agent:
-
-1. starts `deskagent record` in the background (PID file written for clean stop);
-2. runs the script via `deskagent control --target-window <id> --background`;
-3. SIGINTs the recorder when the script's `record_stop` action fires.
-
-### Rule 3 — Dry-run before recording
-
-Run the full script in dry-run mode (no recorder running). Verify each step lands by inspecting the UI between steps or after the run. If it fails:
-
-1. capture a screenshot at the failure
-2. fix the script (coords from a fresh `deskagent inspect`, or timing, or pre-recording state normalization)
-3. dry-run again
-
-Do not record until a clean dry-run passes end-to-end.
-
-### Rule 4 — Native recording only for the final take
-
-Final output uses `deskagent record` — ScreenCaptureKit, per-window or multi-window composited, HEVC `.mp4` (or ProRes `.mov`), SIGINT-clean. Captures occluded windows.
-
-The canonical pipeline:
-
-1. `deskagent inspect --window $ID --json` → element coords (use OCR for Wails/Electron WebView UIs)
-2. Author the script with `coordinate_space: "window"`
-3. Start `deskagent record … --window $ID --no-cursor --pid-file …` in the background
-4. Drive with `deskagent control script.json --target-window $ID --background --no-activate` — `--background` uses AXPress for clicks + per-PID for keys, leaving the user's cursor and frontmost app untouched while the recording runs
-5. `kill -INT $(cat <pid-file>); wait`
-
-macOS prompts for Screen Recording permission the first time `deskagent` runs (System Settings → Privacy & Security → Screen Recording). Driving the desktop with `deskagent control` additionally needs Accessibility permission. `deskagent doctor` reports both.
-
-### Rule 5 — No recovery inside the final recording
-
-If the final take fails:
-
-1. stop recording
-2. discard the failed take
-3. fix the script
-4. re-record from scratch
-
-Live recovery during recording makes ugly video.
-
----
-
-## End-to-end workflow
-
-```
-1. Read the prompt → identify the macOS app, the key flow, the vibe.
-2. Pick window size BEFORE exploration so coords stay valid.
-3. EXPLORE — `deskagent list` → `deskagent inspect` → note coords/waits/captions.
-4. DRAFT JSON script — setup section (normalization), recording section (linear actions with intent/caption).
-5. NORMALIZE state (close extra tabs, log in, hide bookmarks bar, set theme, navigate to start screen).
-6. DRY-RUN the script (no recorder); fix coords / timing until clean.
-7. RE-NORMALIZE state.
-8. START `deskagent record` in the background; note wall-clock t0.
-9. RUN the script via `deskagent control --target-window $ID --background`.
-10. STOP recorder (SIGINT).
-11. BUILD timeline.json from the control runtime's step events (jq recipe in references/deskagent.md).
-12. ADD highlights (click ripples; the cursor isn't in the recording when --no-cursor is used, so ripples are the visual cue).
-13. EXPORT horizontal_16_9 (or other target format).
-14. WRITE copy.md.
-15. SAVE the JSON script + timeline.json next to the video so the demo is reproducible.
+```jsonc
+{
+  "schema_version": 1,
+  "name": "demo1",
+  "coordinate_space": "window",
+  "scenes": [
+    {
+      "id": "open_settings",
+      "caption": "Open Settings",
+      "zoom": { "scale": 2.0, "follow_cursor": true },
+      "actions": [ { "action": "click", "x": 244.5, "y": 54.5 } ]
+    },
+    {
+      "id": "wait_load",
+      "speed": 5.0,
+      "actions": [ { "action": "wait", "ms": 4000 } ]
+    }
+  ],
+  "trim": { "beforeScene": "open_settings", "afterScene": "wait_load" }
+}
 ```
 
----
+`coordinate_space: "window"` keeps screenplays portable across window
+drags. No conditionals, no `wait_for`, no observation loops — every
+action is deterministic. Recording start/stop is **outside** the
+screenplay — the agent owns the lifecycle.
 
-## Outputs
+### 3. Dry-run + state fingerprint
 
-Save outputs in a single demo folder (default: `./demo-out/<name>/`):
+Run the full script with `--background` against the live UI (no
+recorder active). Iterate until clean.
+
+Before the final take, prove state matches what the script expects:
+
+1. `deskagent screenshot --window $ID` → visual record.
+2. At least **two** `deskagent assert` calls on labels that exist
+   ONLY in the expected sub-state. (Section names usually persist
+   across sub-states — they're too coarse.)
+3. Refuse to record if any assert fails. Re-normalize in `setup`.
+
+Per-step assertions inside `recording` are NOT supported — the
+recording is meant to be a deterministic replay, not a probe loop.
+
+### 4. Pin window info BEFORE recording
+
+Capture `id`, `pid`, and `x,y` for every window during exploration,
+then drive with explicit flags. This keeps the take fully
+deterministic — no WindowServer lookups during the run, no chance of
+the wrong window being picked if focus shifted between dry-run and
+record. Historically certain SCK versions also dropped the capture
+stream on cross-process window queries; staying off WindowServer
+during the take guards against that regression coming back.
+
+```bash
+# Pre-record (no recording active):
+INFO=$(deskagent list --all --json \
+       | jq -c '[.windows[] | select(.app=="Safari")] | first')
+ID=$(echo "$INFO" | jq -r '.id')
+PID=$(echo "$INFO" | jq -r '.pid')
+ORIGIN=$(echo "$INFO" | jq -r '"\(.x),\(.y)"')
+
+# Record:
+deskagent record demo.mp4 --window $ID --no-cursor --pid-file /tmp/rec.pid &
+
+# Drive — NEVER --target-window during recording:
+deskagent control script.json \
+    --target-pid $PID --window-frame "$ORIGIN" \
+    --background --no-activate
+
+kill -INT $(cat /tmp/rec.pid); wait
+```
+
+Multi-window: collect pid+origin per window in one pre-record `list`
+call; route each `control` invocation via its own `--target-pid` +
+`--window-frame`.
+
+**Targeting matrix** (the two flags are not interchangeable):
+
+| Mode | Required flags | Why |
+|---|---|---|
+| HID (default — cursor moves, target activated) | `--target-window <id>` | Events go through the global tap → land on the frontmost app. The executor needs the window id to resolve app name + bundle id, then `open -b` activates the target. |
+| Background (`--background` — cursor stays put) | `--target-pid $PID --window-frame "x,y"` | Events post directly to the pid via `CGEventPostToPid` / `AXPress`. No activation; the frame is just for coordinate math. |
+
+Mixing them (`--target-pid` / `--window-frame` without `--background`)
+gives HID delivery with no activation — clicks land on whichever app
+happens to be frontmost.
+
+During a recording, **prefer the background form** — it avoids the
+WindowServer lookup entirely, so the take stays deterministic and is
+not at the mercy of any SCK regression on cross-process queries.
+
+### 5. No live recovery — re-record
+
+Final take failed? Stop, discard, fix the script, re-record. Don't
+patch live.
+
+### 6. Don't resize source windows after exploration
+
+Any `osascript … set size of window` belongs in `setup` BEFORE
+exploration, confirmed with the user. Never inside `recording`.
+Multi-window composites letterbox; that's preferable to a destructive
+mid-take resize.
+
+## End-to-end pipeline
 
 ```
-demo.script.json      ← reproducible script
-timeline.json         ← per-event metadata
-demo.raw.mp4          ← native recording, untouched
-demo.highlights.mp4   ← with click ripples
-demo.horizontal.mp4   ← final 1920×1080 export
-*.captions.json       ← caption track (sidecar)
-copy.md               ← upload copy
+1. Explore → pin id/pid/origin per window, gather click coords.
+2. Author screenplay.json (scenes + actions + zoom/speed/captions/trim).
+3. Normalize state (close tabs, log in, hide bookmarks bar, theme).
+4. Dry-run: deskagent control screenplay.json --target-window $ID --timeline /tmp/dry.json
+   (safe — no recording yet).
+5. State fingerprint via deskagent assert.
+6. RECORD in background:
+     deskagent record demo.raw.mp4 --window $ID --no-cursor --pid-file /tmp/rec.pid &
+7. DRIVE:
+     deskagent control screenplay.json \
+         --target-pid $PID --window-frame "$ORIGIN" \
+         --background --no-activate --timeline timeline.json
+8. STOP: kill -INT $(cat /tmp/rec.pid); wait
+9. Edit (each stage auto-propagates the meta + captions sidecars):
+     node scripts/add_highlights.js demo.raw.mp4   screenplay.json timeline.json demo.hl.mp4
+     node scripts/add_zoom.js       demo.hl.mp4    screenplay.json timeline.json demo.hlz.mp4
+     node scripts/add_captions.js   demo.hlz.mp4   screenplay.json timeline.json demo.hlzc.mp4
+     node scripts/add_speedups.js   demo.hlzc.mp4  screenplay.json timeline.json demo.hlzcs.mp4
+     node scripts/export_video.js   demo.hlzcs.mp4 screenplay.json timeline.json demo.mp4 horizontal_16_9
+10. Copy: node scripts/generate_copy.js timeline.json prompt.txt copy.md
 ```
 
----
+Each editing stage takes the same four positional args:
+`<input.mp4> <screenplay.json> <timeline.json> <out.mp4>`. Multi-window
+recordings additionally need `--target-window <id>` on every stage.
 
-## Detailed references
+## Outputs (one demo folder, default `./demo-out/<name>/`)
 
-Load these as needed:
+```
+screenplay.json        single source of truth (scenes + directives)
+timeline.json          execution evidence from `deskagent control`
+demo.raw.mp4           recording + demo.raw.mp4.meta.json sidecar
+demo.final.mp4         the deliverable (format from screenplay or --format)
+copy.md                upload copy
+```
 
-- `references/desktop.md` — JSON script format, window/zoom guidance, setup normalization checklist
-- `references/deskagent.md` — `deskagent` CLI surface (`list`, `inspect`, `record`, `control`, `doctor`), permission model, the `ControlTimelineEvent → DemoTimelineEvent` mapping recipe, color/range internals
-- `references/timeline.md` — `DemoTimelineEvent` schema and how the runtime should emit it
-- `references/editing.md` — trimming, highlights, captions, speed-up rules, export presets
+The editing pipeline produces intermediate mp4s between `raw` and
+`final` — see `references/editing.md` for the stage chain.
 
-## Example scripts
+## References (load on demand)
 
-- `assets/examples/notes-demo.json` — native macOS app demo (Notes, deskagent control with window-relative coords)
-
-## Templates
-
-- `assets/templates/copy-template.md` — title / short post / Shorts title / thumbnail
-- `assets/templates/captions-template.json` — caption track shape
-
-## Helper scripts
-
-- `deskagent record <out> --window <id> --pid-file <pid>` — capture. Discover IDs with `deskagent list --json`. Full surface in `references/deskagent.md`.
-- `deskagent control <script> --target-window <id> --background --timeline <path>` — drive the UI. Writes `ControlTimelineEvent[]`. Map to the exporter's `DemoTimelineEvent` schema via the jq recipe in `references/deskagent.md`.
-- `deskagent inspect --window <id> --json` — discover clickable elements (AX + Vision OCR).
-- `scripts/export_video.sh <raw.mp4> <timeline.json> <out.mp4> <format>` — trim + crop + final export. Format typically `horizontal_16_9`.
-- `scripts/add_highlights.js <raw.mp4> <timeline.json> <out.mp4> [--ripple-color rgba]` — render click ripples from timeline events. Also writes a `<out>.captions.json` sidecar.
-- `scripts/generate_copy.js <timeline.json> <prompt.txt> <copy.md>` — produce upload copy.
-
-`deskagent record` writes a PID file. Stop it with `kill -INT $(cat <pid-file>)` — SIGINT lets the recorder flush a valid mp4; SIGTERM works too; SIGKILL corrupts the file.
-
----
+- `references/deskagent.md` — CLI surface, permissions, meta sidecar schema
+- `references/desktop.md` — screenplay schema, setup normalization, state-fingerprint recipe
+- `references/timeline.md` — timeline event schema (scene_start / action / scene_end)
+- `references/editing.md` — highlights / zoom / speedups / export
 
 ## Authorization rule
 
-Driving a user's running apps with `deskagent control` can affect their workspace (window focus, tab order, frontmost app, open documents). `--background` minimizes the impact (no focus shift, no cursor movement on screen) but still mutates app state. Before touching apps other than the one the user explicitly named for the demo, ask which app to drive and what's in-bounds. If the chosen approach hits a blocker, surface it and ask — don't silently swap to a different app or open new tabs / windows / documents in the user's running apps.
+`deskagent control` mutates the user's app state (focus, tabs, open
+docs). `--background` minimizes visible impact but still mutates.
+Confirm before touching any app the user didn't name. Don't silently
+swap targets or open new tabs / windows / documents.
 
----
+## Quick failure map
 
-## Failure handling at a glance
-
-| Stage | Failure | Action |
+| Stage | Cause | Action |
 |---|---|---|
-| Exploration | flow unclear | ask user, or pick a reasonable path and note the assumption in `copy.md` |
-| Inspect | `deskagent inspect` returns no useful elements | OCR may need different language packs; try `--ocr-language en-US ru-RU` etc. For a Wails/Electron app, AX walk returns chrome only — that's expected, rely on OCR |
-| Dry-run | step fails | `deskagent inspect` again (window may have re-rendered), fix the coord, re-dry-run |
-| Recording | step fails mid-take | SIGINT recorder, discard, fix the script, re-record |
-| Validate | wrong final state | discard take, fix script, re-record |
-| Export | ffmpeg error | re-read timeline, check format defaults in `references/editing.md` |
-| Color crush in output | known issue with full-range YUV in TV-tagged stream | Update to deskagent ≥ 0.1.0 — single-source path bypasses CI render, multi-source path pre-scales RGB to TV-range via CIColorMatrix |
-| macOS prompts for Screen Recording every release | ad-hoc signing — fresh identity per release | Re-grant once and skip the warning; or build deskagent locally with a stable self-signed cert |
+| `inspect` returns nothing | Wails/Electron WebView | rely on OCR; AX walk only sees chrome |
+| Capture errors at start | Target window `onScreen: false` | bring it forward; SCK can't always frame-pump occluded windows |
+| Cursor / captions in wrong place | meta sidecar missing `firstFrameWallclockMs` | re-record cleanly (sidecar is rewritten on SIGINT finalize) |
+| Editing script errors on multi-window meta | omitted `--target-window` | pass `--target-window <id>` on every editing stage |
+| `screenplay schema_version N not supported` | screenplay was authored for a different deskagent build | re-author to current schema (current: 1) |
+| Color crush in output | Pre-v0.2 record path | upgrade (TV-range YUV preserved via fast-path + CIColorMatrix) |
+| TCC re-prompts every release | Ad-hoc signing — fresh identity per build | re-grant once, or build with a stable self-signed cert |
 
----
+## Chrome / Chromium web apps
 
-## Not in scope (use a different skill / tool)
+Chromium-based browsers (Chrome, Edge, Brave, Arc) are the **worst
+case** for `--background` because Blink renders the page in a
+separate out-of-process renderer that's not in the browser-process
+AX tree:
 
-- Mobile (iOS / Android) demos → use the sibling `mobile-recorder-skill`.
-- Linux / Windows recording — `deskagent` is macOS-only.
-- Direct upload to YouTube / TikTok / X.
-- AI voiceover or background music.
-- A full GUI video editor.
+| Click target | Works with `--background`? |
+|---|---|
+| Browser chrome (Back / Reload / tabs / address bar) | yes — AX-exposed, AXPress works |
+| Page DOM (sidebar links, buttons, forms, anchors) | **no** — events go to the wrong process |
+
+So you cannot record a clean Chrome demo with the canonical
+`--background --target-pid` flow if the script touches page content
+— which it almost always does.
+
+The practical pattern for Chrome demos:
+
+1. **Record with `--no-cursor`** so the system cursor never appears
+   in the video — `add_highlights.js` will synthesize a clean cursor
+   sprite on top.
+2. **Drive with `--target-window`** (HID mode, NOT `--background`):
+   ```bash
+   deskagent control screenplay.json --target-window $ID --timeline timeline.json
+   ```
+   `--target-window` looks up bundle id + window frame, then `open -b`
+   + AX-raise brings Chrome to the front before each session — no
+   separate activation step needed.
+
+This is the one place where Rule 4's "stay off WindowServer during
+the take" recommendation gets bent: Chromium forces HID delivery, and
+HID delivery needs `--target-window` for activation. In practice the
+recording survives the query fine on current macOS. If a fallback is
+ever needed, `osascript … execute javascript` in Chrome mutates the
+DOM without going through the input layer at all.
+
+The user's actual cursor moves during a Chrome take, so "user keeps
+working in another app" isn't an option for Chromium demos.
+WebKit-based browsers (Safari) and Wails/Electron apps DO expose
+their DOM through an AX bridge and accept `--background` clicks
+normally; only Blink-based renderers force HID mode.
+
+Single-page apps quirks worth knowing:
+
+- `deskagent inspect`'s `--ocr` is more reliable than `--ax` on
+  Chrome page content — pick coords from the OCR pass.
+- OCR centres on the text glyphs, not the whole clickable element.
+  Clicking the OCR centre usually still hits the link, but for
+  icon-only buttons use `--annotate-bboxes` on a screenshot and
+  pick a visually safer interior point.
+- "Navigate" via URL bar (`cmd+l` → type → `return`) is more
+  deterministic than chasing nav links in a SPA.
+
+## Out of scope
+
+Mobile (use `mobile-recorder-skill`); Linux/Windows; direct upload;
+AI voiceover / music; GUI video editor.

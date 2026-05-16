@@ -1,99 +1,174 @@
-# Editing & export (desktop / web)
+# Editing & export
 
-The final demo video is produced from two inputs:
+Inputs: `demo.raw.mp4` + `screenplay.json` + `timeline.json` +
+`demo.raw.mp4.meta.json`. Every edit reads all three (see
+[`timeline.md`](./timeline.md) for the anchoring rule).
 
-- `demo.raw.mp4` — the native screen recording, untouched
-- `timeline.json` — every action that happened during `record_start → record_stop`
+Each stage takes the same four positional args:
 
-The agent does not improvise during editing. Each edit operation is derived from the timeline.
-
-## Operations (in order)
-
-1. **Trim head** — drop everything before the first non-`record_start` event.
-2. **Trim tail** — drop everything after the last action's `timeMs` + a small `tail_padding_ms` (default 600).
-3. **Speed up technical waits** — for each `wait` event with `reason: "technical"`, re-time that segment at 2× to 4× (default 3×). *Deferred MVP feature; current `export_video.sh` trims tightly but plays back at 1×.*
-4. **Preserve viewer-readability waits** — never speed up `wait` events with `reason: "viewer_readability"`.
-5. **Add click highlights** — render a soft ripple at `(x, y)` for each `click` event (default duration 480 ms).
-6. **Add scroll trails** — render a fading trail from `(x, y)` to `(x2, y2)` matching `durationMs` (optional).
-7. **Add captions** — for each event with a `caption`, draw a bottom-third caption from that event's `timeMs` to the next caption event (or `record_stop`). Captions are written to a `<out>.captions.json` sidecar and burned in only if ffmpeg has the `drawtext` filter (libfreetype).
-8. **Crop / fit** — letterbox or crop to the target `format` (`horizontal_16_9` by default for desktop).
-9. **Export** — H.264, yuv420p, fps 60 if source is 60, otherwise 30; AAC audio if present.
-
-Steps 1–4 are handled by `scripts/export_video.sh`. Steps 5–6 are handled by `scripts/add_highlights.js`. Steps 7–9 are handled at the end of `export_video.sh`.
-
-Run order:
-
-```bash
-node scripts/add_highlights.js demo.raw.mp4 timeline.json demo.highlights.mp4
-bash scripts/export_video.sh demo.highlights.mp4 timeline.json demo.horizontal.mp4 horizontal_16_9
+```
+<input.mp4>  <screenplay.json>  <timeline.json>  <output.mp4>
 ```
 
-## Highlight rules
+Plus `--target-window <id>` whenever the meta sidecar has multiple
+windows. Stages **auto-propagate** the meta + captions sidecars so the
+next stage finds them without a manual `cp`.
 
-- Click → soft circular ripple, ~3% of the recording's short edge in diameter (typically ~30–40 px on a 1920×1080 capture).
-- The system cursor is already visible in the recording — do NOT draw a separate cursor halo.
-- Scroll → optional fading trail along the path. Off by default for tight demos; useful for tutorials.
-- Optional zoom-on-region for clicks tagged with `intent` containing `"zoom"` (deferred MVP feature).
+## Pipeline
 
-## Caption rules
+```bash
+node scripts/add_highlights.js demo.raw.mp4   screenplay.json timeline.json demo.hl.mp4     [--target-window $ID]
+node scripts/add_zoom.js       demo.hl.mp4    screenplay.json timeline.json demo.hlz.mp4    [--target-window $ID]
+node scripts/add_captions.js   demo.hlz.mp4   screenplay.json timeline.json demo.hlzc.mp4   [--target-window $ID]
+node scripts/add_speedups.js   demo.hlzc.mp4  screenplay.json timeline.json demo.hlzcs.mp4  [--target-window $ID]
+node scripts/export_video.js   demo.hlzcs.mp4 screenplay.json timeline.json demo.final.mp4 horizontal_16_9 [--target-window $ID]
+```
 
-- short — under 8 words by default
-- one caption visible at a time
-- bottom third of the frame; move to top third only if a caption overlaps a critical UI element
-- captions are editable — `add_highlights.js` writes a `<out>.captions.json` sidecar so a human can tweak the text before re-encoding
-- font: system sans-serif, weight 700, ~32 px at 1920-wide horizontal, scaled proportionally for other formats
+Ordering matters:
 
-`captions.json` schema:
+1. **highlights** burns ripples + cursor sprite onto source-time frames,
+   and emits the captions sidecar (not burned).
+2. **zoom** transforms the framed canvas uniformly — ripples + cursor
+   come along for free.
+3. **captions** burns captions in OUTPUT-frame coords (viewport
+   pixels), AFTER zoom — so the zoom transformation never crops them.
+4. **speedups** re-times frames; remaps the captions sidecar through
+   the warp and emits `<out>.timewarp.json`.
+5. **export** trims by `screenplay.trim` (scene IDs); if a
+   `<input>.timewarp.json` exists, source-time trim points are mapped
+   through the warp.
+
+Skip any stage by skipping its call and pointing the next stage at the
+previous output.
+
+## `add_highlights.js`
+
+Reads click positions from the timeline (`action == "click"` events).
+Burns soft ripples at click coords + a synthetic cursor sprite (arrow
+during motion, pointing-hand on click). Also writes
+`<out>.captions.json` from `screenplay.scenes[].caption` — captions are
+NOT burned here (see `add_captions.js`).
+
+| Flag | Effect |
+|---|---|
+| `--target-window <id>` | REQUIRED for multi-window composites. |
+| `--no-cursor-sprite` | Skip cursor rendering (use for HID-mode recordings). |
+| `--cursor-color RRGGBB` | Tint. Default black. |
+| `--cursor-size N` | Sprite longest edge in px. Default `max(64, videoHeight * 0.07)`. |
+| `--ripple-color r:g:b:a` | Ripple peak. Default `255:255:255:180`. |
+
+## `add_zoom.js`
+
+**Opt-in.** Only scenes with a `zoom` directive zoom. See
+[`desktop.md`](./desktop.md#zoom-scene-level) for the directive shape.
+
+| Flag | Effect |
+|---|---|
+| `--target-window <id>` | REQUIRED for multi-window composites. |
+| `--ramp S` | Ease-in / ease-out seconds at the segment edges. Default `0.2`. |
+| `--deadzone F` | Cursor may roam this fraction of the zoomed view before the camera pans. Default `0.10`. |
+| `--follow-smoothing F` | EMA alpha for camera catch-up (0..1). Default `0.5`. |
+| `--debug` | Print the ffmpeg filtergraph on stderr. |
+
+Implementation notes:
+
+- Uses ffmpeg's `zoompan` filter (not `crop`, whose `w`/`h` are
+  init-only) so all zoom geometry is re-evaluated every frame.
+- Hard-errors when meta is missing or multi-window without `--target-window`.
+
+### HID-mode (real cursor in the recording)
+
+When `deskagent record` ran WITHOUT `--no-cursor`, the captured window
+already contains a real cursor. Pass `--no-cursor-sprite` to
+`add_highlights.js` (so you don't double up) and the cursor-follow zoom
+falls back to interpolating click positions, same as BG mode. If you
+want the camera to follow the recorded HID cursor track instead,
+provide `<input>.mouse-path.json` (written by `deskagent control
+--mouse-path`) — currently the script reads only clicks from the
+timeline, so a future flag will pull mouse-path samples directly.
+
+## `add_captions.js`
+
+Burns captions at fixed OUTPUT-frame coords (centered horizontally, at
+configurable Y) so the zoom transformation upstream doesn't crop them.
+Reads `<input>.captions.json` (propagated from highlights); falls back
+to deriving captions from `screenplay.scenes[].caption` if the sidecar
+is missing.
+
+| Flag | Effect |
+|---|---|
+| `--target-window <id>` | Only required if the meta sidecar has multiple windows. |
+| `--caption-y FRACTION` | 0 = top, 1 = bottom. Default `0.85`. |
+| `--caption-font-size N` | Default `max(28, videoHeight * 0.04)`. |
+| `--no-captions` | Passthrough (sidecar carried forward unchanged). |
+
+Hand-edit `<input>.captions.json` between zoom and captions to tweak
+text or timing without re-running highlights.
+
+## `add_speedups.js`
+
+**Opt-in.** Only scenes with a `speed` directive re-time. See
+[`desktop.md`](./desktop.md#speed-scene-level) for the directive shape.
+
+Writes two sidecars beside the output:
+
+- **`<out>.timewarp.json`** — piecewise map of src↔dst seconds + factor
+  per segment. Consumed by `export_video.js` for trim math, and
+  available to any downstream consumer that lives in source time.
+- **`<out>.captions.json`** — input captions remapped through the warp
+  (start/end remapped per segment).
+
+| Flag | Effect |
+|---|---|
+| `--target-window <id>` | REQUIRED for multi-window composites. |
+| `--debug` | Print the ffmpeg filtergraph on stderr. |
+
+Burned-in pixels (ripples, cursor, captions) come along for free —
+ffmpeg just re-times the rendered frames.
+
+## `export_video.js`
+
+```bash
+node scripts/export_video.js <in.mp4> <screenplay.json> <timeline.json> <out.mp4> <format> [--target-window <id>]
+```
+
+| Format | Dims |
+|---|---|
+| `horizontal_16_9` | 1920 × 1080 |
+| `square_1_1` | 1080 × 1080 |
+| `vertical_9_16` | 1080 × 1920 |
+
+Trim window comes from `screenplay.trim`:
+
+```
+head = scene[ trim.beforeScene ].tStart            (defaults to first scene)
+tail = scene[ trim.afterScene  ].tEnd + 600 ms     (defaults to last scene)
+```
+
+Both are resolved against the timeline. If a `<input>.timewarp.json`
+sits next to the input, the source-time bounds are mapped through it so
+the cut lands on the right frames in the sped-up output.
+
+## Captions sidecar shape
 
 ```json
 [
-  { "startMs": 1500, "endMs": 4200, "text": "Open Settings" },
-  { "startMs": 4200, "endMs": 6200, "text": "Create your first project" }
+  { "startMs": 500,  "endMs": 850,  "text": "Switch to Automation" },
+  { "startMs": 2050, "endMs": 2150, "text": "Back to Testing" }
 ]
 ```
 
-If the user edits the sidecar, re-run the export with `--captions <out>.captions.json` to override.
+After `add_speedups.js`, the same file beside the sped-up mp4 has
+`startMs`/`endMs` rewritten through the warp.
 
-## Export formats
+## Window sizing matters more than crop
 
-```yaml
-horizontal_16_9: { width: 1920, height: 1080 }
-square_1_1:      { width: 1080, height: 1080 }
-vertical_9_16:   { width: 1080, height: 1920 }
-```
+A 1440 × 900 window on a 3456 × 2234 retina display means the export
+downscales mostly empty pixels. Size the demo window to fill the
+capture region; crop only menu bar / taskbar in post.
 
-Default → `horizontal_16_9`. The user may override (`square_1_1` for Instagram feed posts; `vertical_9_16` is uncommon for desktop but possible).
+## `copy.md` generation
 
-## Window-and-zoom prep matters more than crop
-
-A clean export starts with a tight capture region. macOS captures the full screen; if the demo target is a 1440×900 browser window inside a 3456×2234 retina display, the export will downscale a lot of empty pixels. Prefer to size the demo window so its visible content fills most of the capture region before recording, and crop only the menu bar / taskbar in post.
-
-## ffmpeg primitives used by the export script
-
-For reference (the script wraps these):
-
-- Trim: `ffmpeg -ss <start> -to <end> -i raw.mp4 -c copy trimmed.mp4`
-- Crop + scale: `ffmpeg -i in.mp4 -vf "crop=w:h:x:y,scale=W:H,setsar=1" out.mp4`
-- Speed up a segment: `ffmpeg -i seg.mp4 -filter:v "setpts=PTS/3" -filter:a "atempo=3.0" sped.mp4`
-- Concat: `ffmpeg -f concat -safe 0 -i list.txt -c copy concat.mp4`
-- Burn caption: `ffmpeg -i in.mp4 -vf "drawtext=text='...':...:enable='between(t,a,b)'" out.mp4`
-
-## copy.md generation
-
-`scripts/generate_copy.js` reads `timeline.json` + the original user prompt and produces:
-
-```md
-# Title
-<one-line headline drawn from the strongest caption>
-
-# Short post
-<2–3 sentences summarizing the flow>
-
-# YouTube Shorts title
-<short, hook-first phrasing>
-
-# Thumbnail text
-<3–5 words, large-text safe>
-```
-
-Use the first caption as the title hook by default. If captions are missing, fall back to `intent` fields.
+`node scripts/generate_copy.js timeline.json prompt.txt copy.md` —
+reads scene captions / intents from the timeline and produces title /
+short post / Shorts title / thumbnail text. Hand-rewrite as needed.

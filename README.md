@@ -12,18 +12,18 @@ discovery.
 
 The skill teaches an agent to:
 
-1. **Explore** the workflow — `deskagent list`, `deskagent inspect`, screenshots.
-2. **Generate** a deterministic JSON script using window-relative coords.
+1. **Explore** the workflow — `deskagent list`, `deskagent inspect`, screenshots, `deskagent assert`.
+2. **Author** a `screenplay.json` — scenes of deterministic actions plus per-scene editing directives (`caption`, `zoom`, `speed`, top-level `trim`).
 3. **Normalize state** before recording (window size, theme, navigation to start screen).
-4. **Dry-run** the script with assertions enabled.
-5. **Record** the take with `deskagent record` (ScreenCaptureKit, per-window) running concurrently with `deskagent control --background` (AXPress + per-PID delivery — no focus shift, user keeps working).
-6. **Build timeline metadata** for every action.
-7. **Export** a polished video with click ripples, captions, and upload copy.
+4. **Dry-run** the screenplay against the live UI; confirm with `deskagent assert` before the take.
+5. **Record** with `deskagent record` (ScreenCaptureKit, per-window) while `deskagent control` drives — `--background` (per-pid + AXPress, no focus shift) for AX-rich apps, HID delivery for Chromium-based web apps.
+6. **Edit** via the five-stage pipeline: highlights → zoom → captions → speedups → export. Each stage reads `screenplay + timeline + meta`; sidecars auto-propagate.
+7. **Ship** a polished mp4 with click ripples, cursor sprite, captions, variable-speed playback, and optional upload copy.
 
 The golden rule:
 
 ```
-explore → script → dry-run → record → edit/export
+explore → screenplay → dry-run → record → edit → export
 ```
 
 Never:
@@ -93,14 +93,17 @@ The skill triggers automatically. The agent walks the explore → script →
 dry-run → record → export pipeline and produces a demo folder containing:
 
 ```
-demo.script.json      ← reproducible script
-timeline.json         ← per-event metadata
-demo.raw.mp4          ← native recording, untouched
-demo.highlights.mp4   ← with click ripples
-demo.horizontal.mp4   ← final 1920×1080 export
-*.captions.json       ← caption track (sidecar)
+screenplay.json       ← single source of truth (scenes + directives)
+timeline.json         ← execution evidence (scene_start / action / scene_end)
+demo.raw.mp4          ← native recording + .meta.json sidecar
+demo.final.mp4        ← final 1920×1080 export (or chosen format)
+*.captions.json       ← caption track sidecar
 copy.md               ← upload copy
 ```
+
+Intermediate mp4s flow through the editing pipeline (`demo.hl.mp4` →
+`demo.hlz.mp4` → `demo.hlzc.mp4` → `demo.hlzcs.mp4`); see
+`skills/desktop-recorder/references/editing.md` for the stage chain.
 
 ---
 

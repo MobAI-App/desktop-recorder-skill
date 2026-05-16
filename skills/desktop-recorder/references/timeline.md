@@ -1,111 +1,96 @@
-# Timeline metadata (desktop / web)
+# Timeline event schema
 
-Every action the script runs during `record_start → record_stop` becomes one `DemoTimelineEvent`. The export pipeline reads these events to drive captions, click highlights, and (eventually) speed-up of technical waits.
-
-## Schema
+`deskagent control screenplay.json --timeline timeline.json` emits a
+flat JSON array of three event types, in execution order:
 
 ```ts
-type DemoTimelineEvent = {
-  timeMs: number                  // ms since record_start
-  type:
-    | "record_start"
-    | "record_stop"
-    | "click"
-    | "type"                      // keyboard input
-    | "paste"                     // clipboard insert
-    | "scroll"
-    | "wait"                      // explicit pause
-    | "caption"                   // standalone caption marker
+type TimelineEvent =
+  | { type: "scene_start" } & SceneBoundary
+  | { type: "scene_end"   } & SceneBoundary
+  | { type: "action"      } & ActionEvent
 
-  intent?: string                 // "Create project"
-  caption?: string                // "Create your first project"
+type SceneBoundary = {
+  scene_id:     string
+  scene_index:  number
+  startedAtMs:  number     // ms since control run start
+  endedAtMs:    number     // === startedAtMs for boundary events
+  startedAtWallclockMs: number    // Unix-epoch ms — anchor for video time
+  endedAtWallclockMs:   number
+  coordinate_space: "window" | "screen"
+}
 
-  x?: number                      // CG screen *points* in `coordinate_space`
+type ActionEvent = SceneBoundary & {
+  action_id:    string     // canonical: "${scene_id}/${action_index}"
+  action_index: number
+  action:       "click" | "double_click" | "drag"
+              | "type"  | "key"          | "scroll"
+              | "wait"  | "move"
+  x?: number               // CG screen points in coordinate_space
   y?: number
-  x2?: number                     // scroll endpoint (same space as x/y)
-  y2?: number
-  coordinate_space?: "window" | "screen"
-
-  durationMs?: number             // wait, scroll duration
-  text?: string                   // typed/pasted text
-  reason?: "technical" | "viewer_readability"
 }
 ```
-
-## How the runtime emits events
-
-The desktop runtime executes the JSON script step by step and owns event emission. It must:
-
-1. Emit `{ timeMs: 0, type: "record_start" }` when it processes the `record_start` action.
-2. For each subsequent action that has a visual effect, capture `timeMs` (ms since `record_start`) and emit one event using the action's `intent`, `caption`, `x`, `y`, etc.
-3. Emit `{ timeMs: <elapsed>, type: "record_stop" }` when it processes the `record_stop` action.
-
-All actions are coordinate-based (deskagent control). If the script used `coordinate_space: "window"`, the runtime resolves window-relative coords to absolute screen coords at click time using the target window's frame, so the value written to the timeline always matches the recorded pixels.
-
-### Coordinate space
-
-Coordinates in `timeline.json` are in **CG screen points** (not pixels)
-and are interpreted in `coordinate_space` (`"window"` or `"screen"`) —
-exactly as the control script wrote them.
-
-Conversion to source pixels happens at overlay time. The recorder writes
-`<output>.meta.json` next to the video with the recording's `backingScale`
-and the captured window's `frameCG`; `add_highlights.js` reads it and
-maps each event's `(x, y)` into the raw mp4's pixel grid:
-
-```
-if coordinate_space == "window":
-    pixel = point * backingScale
-else:  # "screen"
-    pixel = (point - windowOriginCG) * backingScale
-```
-
-This way the same `timeline.json` and the same script work on retina and
-non-retina captures without re-running the control step.
-
-### Invariants
-
-1. The first event has `timeMs: 0` and `type: "record_start"`.
-2. `timeMs` is measured from `record_start`, in milliseconds, monotonically increasing.
-3. The last event before `record_stop` is the final user-visible action.
-4. The final event has `type: "record_stop"` and a `timeMs` equal to the elapsed recording duration.
 
 ## Example
 
 ```json
 [
-  { "timeMs": 0,    "type": "record_start" },
-  { "timeMs": 1500, "type": "click", "x": 812,  "y": 522, "intent": "Open Settings", "caption": "Open Settings" },
-  { "timeMs": 2200, "type": "wait",  "durationMs": 700, "reason": "viewer_readability" },
-  { "timeMs": 2900, "type": "type",  "text": "Demo project", "intent": "Name the project" },
-  { "timeMs": 4200, "type": "click", "x": 940,  "y": 710, "intent": "Create",  "caption": "Create your first project" },
-  { "timeMs": 5200, "type": "wait",  "durationMs": 1000, "reason": "technical" },
-  { "timeMs": 6200, "type": "record_stop" }
+  { "type": "scene_start", "scene_id": "open_settings", "scene_index": 0,
+    "startedAtMs": 500, "endedAtMs": 500,
+    "startedAtWallclockMs": 1778883094300, "endedAtWallclockMs": 1778883094300,
+    "coordinate_space": "window" },
+
+  { "type": "action", "scene_id": "open_settings", "scene_index": 0,
+    "action_id": "open_settings/0", "action_index": 0, "action": "click",
+    "startedAtMs": 752, "endedAtMs": 800,
+    "startedAtWallclockMs": 1778883094552, "endedAtWallclockMs": 1778883094600,
+    "x": 244.5, "y": 54.5, "coordinate_space": "window" },
+
+  { "type": "scene_end", "scene_id": "open_settings", "scene_index": 0,
+    "startedAtMs": 850, "endedAtMs": 850,
+    "startedAtWallclockMs": 1778883094650, "endedAtWallclockMs": 1778883094650,
+    "coordinate_space": "window" }
 ]
 ```
 
-## How the exporter uses the timeline
+## Mapping to video time
 
-| Field | Used for |
-|---|---|
-| `type: "click"` + `x,y` | render a click ripple at that pixel coordinate |
-| `type: "scroll"` + endpoints | render a motion trail (optional) |
-| `intent` | tooltip / fallback caption when none provided |
-| `caption` | floating caption overlay; on screen from this event to the next caption event (or `record_stop`) |
-| `reason: "technical"` on `wait` | candidate for speed-up during edit (deferred MVP feature) |
-| `reason: "viewer_readability"` on `wait` | preserve at 1× — never speed up |
-| `timeMs` of first action | trim point for the start of the final video |
-| `timeMs` of last non-wait action | trim point for the end of the final video |
+Every editing script anchors via:
 
-## Validation rules
+```
+videoSec = (event.startedAtWallclockMs - meta.firstFrameWallclockMs) / 1000
+```
 
-Before export, verify:
+`firstFrameWallclockMs` lives in the recording's `<out>.meta.json`
+sidecar. Editing scripts read both files; the agent never computes
+this by hand.
 
-- `timeline.json` parses as JSON
-- exactly one `record_start` and one `record_stop`
-- `timeMs` is non-decreasing
-- every `click` has both `x` and `y`
-- every `scroll` has both endpoints and `durationMs`
-- every `wait` has `durationMs` and a `reason`
+## Joining timeline to screenplay
 
-If any of these fail, do not export — fix the timeline-emit step and re-run (no need to re-record; the source mp4 is unchanged).
+Both files agree on `scene_id`. Action references in screenplay
+directives (`fromAction`, `toAction`) use the canonical `action_id =
+"${scene_id}/${action_index}"`. Resolution is hard-failure on the
+editing side — missing IDs print the available IDs and exit non-zero.
+
+## Coordinate space
+
+`x` / `y` are CG screen **points** (not pixels) in the declared
+`coordinate_space`. Editing scripts map to canvas pixels via the meta
+sidecar's `canvasRect` for the chosen `--target-window`:
+
+```
+windowSpace:  pixel = canvasRect.x + point * canvasRect.w / frameCG.w
+screenSpace:  pixel = canvasRect.x + (point - frameCG.x) * canvasRect.w / frameCG.w
+```
+
+## Invariants
+
+1. Events arrive in execution order; `*WallclockMs` is monotone
+   non-decreasing.
+2. Every `scene_start` is followed by a matching `scene_end` with the
+   same `scene_id` / `scene_index`. Actions in between carry that
+   `scene_id`.
+3. `action_id` is unique across the timeline (since scene IDs are
+   unique and action indices are local).
+4. `record_start` / `record_stop` markers are NOT in the timeline —
+   the screenplay doesn't describe them. The recording's
+   `firstFrameWallclockMs` is the only video anchor.
