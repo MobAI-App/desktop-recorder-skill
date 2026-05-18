@@ -53,9 +53,14 @@ NOT burned here (see `add_captions.js`).
 |---|---|
 | `--target-window <id>` | REQUIRED for multi-window composites. |
 | `--no-cursor-sprite` | Skip cursor rendering (use for HID-mode recordings). |
-| `--cursor-color RRGGBB` | Tint. Default black. |
-| `--cursor-size N` | Sprite longest edge in px. Default `max(64, videoHeight * 0.07)`. |
-| `--ripple-color r:g:b:a` | Ripple peak. Default `255:255:255:180`. |
+| `--cursor-color RRGGBB` | Tint for the procedural cursor. Default black. |
+| `--cursor-size N` | Procedural sprite longest edge in px. Default `max(64, videoHeight * 0.07)`. |
+| `--cursor-png PATH` | Use this PNG for the arrow sprite instead of the procedural one (skips `deskagent cursor-png`). User owns sizing. |
+| `--cursor-png-pointing PATH` | Pointing-hand sprite for the click frame. Optional; falls back to `--cursor-png` if absent (no swap). |
+| `--cursor-hotspot X,Y` | Arrow hotspot in sprite pixels. Default `0,0` (top-left tip). |
+| `--cursor-hotspot-pointing X,Y` | Pointing hotspot. Default scales as `12/32, 1/32` of `--cursor-size` (matches the procedural sprite). |
+| `--ripple-color r:g:b:a` | Procedural ripple color + peak alpha. Default `255:255:255:180`. |
+| `--ripple-sprite PATH` | Custom animated sprite (video w/ alpha — `.mov` qtrle, APNG, transparent WebM). Overrides the procedural ring. Plays once per click. |
 
 ## `add_zoom.js`
 
