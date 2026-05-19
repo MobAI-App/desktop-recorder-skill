@@ -170,14 +170,10 @@ const cursorClicks = clickRecs.map((c) => ({ tSec: c.tStart, x: c.canvasX, y: c.
 
 const cursorSize = CURSOR_SIZE_OVERRIDE ?? Math.max(64, Math.round(srcH * 0.07));
 const cursorAssets = { arrow: null, pointing: null };
-// Hotspots in sprite pixels. Procedural defaults: arrow tip at (0,0),
-// pointing-hand fingertip at (12/32, 1/32) of the cursor size grid.
-let hotspotArrow    = parseHotspot(CURSOR_HOTSPOT_ARROW, 0, 0);
-let hotspotPointing = parseHotspot(
-  CURSOR_HOTSPOT_POINTING,
-  Math.round(cursorSize * 12 / 32),
-  Math.round(cursorSize *  1 / 32),
-);
+// Arrow hotspot defaults to (0,0) — top-left tip on the procedural arrow.
+let hotspotArrow = parseHotspot(CURSOR_HOTSPOT_ARROW, 0, 0);
+// Pointing hotspot default depends on which sprite gets used (set below).
+let hotspotPointing;
 
 if (CURSOR_ENABLED && cursorClicks.length > 0) {
   if (CURSOR_PNG_ARROW) {
@@ -185,13 +181,21 @@ if (CURSOR_ENABLED && cursorClicks.length > 0) {
       console.error(`--cursor-png not found: ${CURSOR_PNG_ARROW}`); process.exit(3);
     }
     cursorAssets.arrow = CURSOR_PNG_ARROW;
-    // No procedural default for the pointing-hand sprite — fall back to the
-    // arrow if the user didn't override pointing too (so click frames still
-    // render with *something*, just without the swap).
+    // No procedural pointing-hand to fall back on — reuse the arrow sprite if
+    // the user didn't override pointing too. Click frames still render with
+    // *something*, just without the swap.
     cursorAssets.pointing = CURSOR_PNG_POINTING || CURSOR_PNG_ARROW;
     if (CURSOR_PNG_POINTING && !fs.existsSync(CURSOR_PNG_POINTING)) {
       console.error(`--cursor-png-pointing not found: ${CURSOR_PNG_POINTING}`); process.exit(3);
     }
+    // If pointing reuses the arrow sprite, share the arrow hotspot so the
+    // click frame doesn't visibly jump. Only the procedural pair has the
+    // (12/32, 1/32) offset baked into the sprite.
+    const pointingFallsBackToArrow = !CURSOR_PNG_POINTING;
+    hotspotPointing = parseHotspot(
+      CURSOR_HOTSPOT_POINTING,
+      ...(pointingFallsBackToArrow ? hotspotArrow : [0, 0]),
+    );
   } else {
     const dir = path.join(os.tmpdir(), `demo-cursors-${cursorSize}-${CURSOR_COLOR.replace(/[^0-9a-fA-F]/g, "_")}`);
     fs.mkdirSync(dir, { recursive: true });
@@ -211,6 +215,13 @@ if (CURSOR_ENABLED && cursorClicks.length > 0) {
       }
       cursorAssets[t] = p;
     }
+    // Procedural pointing-hand sprite: fingertip at (12/32, 1/32) of the
+    // sprite grid (CursorPngCommand draws it on that layout).
+    hotspotPointing = parseHotspot(
+      CURSOR_HOTSPOT_POINTING,
+      Math.round(cursorSize * 12 / 32),
+      Math.round(cursorSize *  1 / 32),
+    );
   }
 }
 
