@@ -1,21 +1,9 @@
-# Build artifacts
-.build/
-.swiftpm/
-DerivedData/
-
-# Xcode user data
-*.xcodeproj/xcuserdata/
-*.xcworkspace/xcuserdata/
-
-# IDE / editor
 .vscode/
 .idea/
 *.swp
-
-# macOS
 .DS_Store
 
-# Demo outputs (user-facing recordings, not project source)
+# Demo outputs
 demo-out/
 recordings/
 *.mov
@@ -23,9 +11,6 @@ recordings/
 *.m4v
 !assets/**/*.mov
 !assets/**/*.mp4
-
-# App bundle artifacts (rebuilt by scripts/build.sh)
-deskagent.app/
 
 # Personal env / secrets
 .env
