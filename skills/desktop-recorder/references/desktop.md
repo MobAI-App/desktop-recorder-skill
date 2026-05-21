@@ -28,7 +28,7 @@ See [`deskagent.md`](./deskagent.md) for the CLI,
 | Field | Required | Purpose |
 |---|---|---|
 | `schema_version` | yes | Currently `1`. Wrong value → hard error. |
-| `coordinate_space` | no (`screen`) | `"window"` resolves x/y against the executor's window origin — recommended. |
+| `coordinate_space` | no (`screen`) | `"window"` resolves x/y against the executor's window origin - recommended. |
 | `timeout_ms` | no | Total budget for the run; override at CLI with `--timeout-ms`. |
 | `sample_mouse_ms` | no | Mouse-path sampling cadence (HID-mode demos). |
 | `scenes` | yes | Ordered execution units. |
@@ -74,7 +74,7 @@ See [`deskagent.md`](./deskagent.md) for the CLI,
 { "action": "scroll",       "dx": 0, "dy": -3 }
 ```
 
-No `intent` / `caption` / `zoom` fields on actions — those live on the
+No `intent` / `caption` / `zoom` fields on actions - those live on the
 scene. Action records are pure execution.
 
 `coordinate_space` is screenplay-wide (`"window"` or `"screen"`); the
@@ -139,7 +139,7 @@ Editing scripts additionally validate:
 Authors may add free-form `setup`, `preflight`, `validate` arrays at the
 top level for their own bookkeeping (open-app shell commands,
 `deskagent assert` probes, post-demo verifications). Neither
-`deskagent control` nor the editing scripts read them — they're notes
+`deskagent control` nor the editing scripts read them - they're notes
 the agent re-executes manually outside the screenplay.
 
 ```json

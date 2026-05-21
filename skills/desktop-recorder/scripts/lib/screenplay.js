@@ -1,82 +1,35 @@
-/**
- * Shared screenplay/timeline/meta loader used by every editing script.
- *
- * Resolves scene/action IDs to wall-clock-anchored video seconds, exposes a
- * canvas-pixel coordinate transform, and hard-errors on missing references.
- *
- * Usage:
- *   const { loadContext } = require("./lib/screenplay");
- *   const ctx = loadContext({
- *     inputMp4: "/tmp/demo.mp4",         // used to find <inputMp4>.meta.json
- *     screenplayPath: "screenplay.json",
- *     timelinePath:   "timeline.json",
- *     targetWindowId: 245663,            // required for multi-window meta
- *   });
- *   const range = ctx.resolveActionRange({ sceneId: "open", fromAction: ..., toAction: ... });
- */
-
 const fs = require("fs");
 const SUPPORTED_SCHEMA_VERSION = 1;
 
 function loadContext({ inputMp4, screenplayPath, timelinePath, targetWindowId }) {
-  if (!screenplayPath || !fs.existsSync(screenplayPath)) {
-    fatal(`screenplay not found: ${screenplayPath}`);
-  }
-  if (!timelinePath || !fs.existsSync(timelinePath)) {
-    fatal(`timeline not found: ${timelinePath}`);
-  }
+  if (!screenplayPath || !fs.existsSync(screenplayPath)) fatal(`screenplay not found: ${screenplayPath}`);
+  if (!timelinePath   || !fs.existsSync(timelinePath))   fatal(`timeline not found: ${timelinePath}`);
+
   const metaPath = inputMp4 + ".meta.json";
-  if (!fs.existsSync(metaPath)) {
-    fatal(`meta sidecar not found: ${metaPath}`);
-  }
+  if (!fs.existsSync(metaPath)) fatal(`meta sidecar not found: ${metaPath}`);
 
   const screenplay = JSON.parse(fs.readFileSync(screenplayPath, "utf8"));
   if ((screenplay.schema_version ?? 1) !== SUPPORTED_SCHEMA_VERSION) {
     fatal(`screenplay schema_version ${screenplay.schema_version} not supported (expected ${SUPPORTED_SCHEMA_VERSION})`);
   }
-  if (!Array.isArray(screenplay.scenes)) {
-    fatal(`screenplay missing "scenes" array`);
-  }
+  if (!Array.isArray(screenplay.scenes)) fatal(`screenplay missing "scenes" array`);
 
   const timeline = JSON.parse(fs.readFileSync(timelinePath, "utf8"));
-  if (!Array.isArray(timeline)) {
-    fatal(`timeline must be a JSON array of events`);
-  }
+  if (!Array.isArray(timeline)) fatal(`timeline must be a JSON array of events`);
 
   const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-  if (!meta.windows || meta.windows.length === 0) {
-    fatal(`meta sidecar has no windows`);
-  }
+  if (!meta.windows || meta.windows.length === 0) fatal(`meta sidecar has no windows`);
 
   const firstFrameWallclockMs = meta.firstFrameWallclockMs;
-  if (firstFrameWallclockMs == null) {
-    fatal(`meta sidecar missing firstFrameWallclockMs — recording incomplete?`);
-  }
+  if (firstFrameWallclockMs == null) fatal(`meta sidecar missing firstFrameWallclockMs - recording incomplete?`);
 
-  let target;
-  if (targetWindowId != null) {
-    target = meta.windows.find((w) => w.id === targetWindowId);
-    if (!target) {
-      fatal(
-        `--target-window ${targetWindowId} not in meta. Available:\n` +
-        meta.windows.map((w) => `  id=${w.id}  ${w.app}`).join("\n")
-      );
-    }
-  } else if (meta.windows.length > 1) {
-    fatal(
-      `meta sidecar has ${meta.windows.length} windows; pass --target-window <id>. Available:\n` +
-      meta.windows.map((w) => `  id=${w.id}  ${w.app}  canvasRect=[${(w.canvasRect||[]).join(",")}]`).join("\n")
-    );
-  } else {
-    target = meta.windows[0];
-  }
+  const target = pickTarget(meta.windows, targetWindowId);
 
-  // Index timeline events: scene ranges + action lookups.
-  const sceneRanges  = new Map(); // sceneId → { tStart, tEnd, sceneIndex }
-  const actionEvents = new Map(); // actionId → resolved event record
-  const sceneActions = new Map(); // sceneId → [actionId, ...] in order
+  const sceneRanges  = new Map();
+  const actionEvents = new Map();
+  const sceneActions = new Map();
+  const sceneStart   = new Map();
 
-  const sceneStart = new Map(); // sceneId → wallclock ms
   for (const e of timeline) {
     if (e.type === "scene_start") {
       sceneStart.set(e.scene_id, e.startedAtWallclockMs);
@@ -85,8 +38,8 @@ function loadContext({ inputMp4, screenplayPath, timelinePath, targetWindowId })
       if (startMs == null) fatal(`scene_end "${e.scene_id}" without matching scene_start`);
       sceneRanges.set(e.scene_id, {
         sceneIndex: e.scene_index,
-        tStart: secondsFromWallclock(startMs, firstFrameWallclockMs),
-        tEnd:   secondsFromWallclock(e.endedAtWallclockMs, firstFrameWallclockMs),
+        tStart: secondsFromWallclock(startMs,                firstFrameWallclockMs),
+        tEnd:   secondsFromWallclock(e.endedAtWallclockMs,   firstFrameWallclockMs),
       });
     } else if (e.type === "action") {
       const rec = {
@@ -116,11 +69,8 @@ function loadContext({ inputMp4, screenplayPath, timelinePath, targetWindowId })
     return [cx + (x / winW) * cw, cy + (y / winH) * ch];
   }
 
-  /**
-   * Resolve a directive's action range to [tStart, tEnd) in video seconds.
-   * Half-open: toAction names the first EXCLUDED action.
-   * Omitted fromAction → scene's first action. Omitted toAction → scene end.
-   */
+  // Half-open [tStart, tEnd) in video seconds. Missing fromAction = scene
+  // start; missing toAction = scene end. toAction is excluded.
   function resolveActionRange({ sceneId, fromAction, toAction }) {
     if (!sceneId) fatal(`resolveActionRange: sceneId is required`);
     const range = sceneRanges.get(sceneId);
@@ -138,7 +88,7 @@ function loadContext({ inputMp4, screenplayPath, timelinePath, targetWindowId })
     if (toAction) {
       const rec = actionEvents.get(toAction);
       if (!rec) fatal(`toAction "${toAction}" not found. Available in "${sceneId}": ${ids.join(", ")}`);
-      tEnd = rec.tStart;   // half-open: toAction is excluded
+      tEnd = rec.tStart;
     }
     if (tEnd <= tStart) fatal(`empty range for scene "${sceneId}" (${tStart} >= ${tEnd})`);
     return { tStart, tEnd };
@@ -155,18 +105,26 @@ function loadContext({ inputMp4, screenplayPath, timelinePath, targetWindowId })
   }
 
   return {
-    screenplay,
-    timeline,
-    meta,
-    target,
-    firstFrameWallclockMs,
-    sceneRanges,
-    actionEvents,
-    sceneActions,
-    pointToCanvasPixel,
-    resolveActionRange,
-    clickEventsInVideoSeconds,
+    screenplay, timeline, meta, target, firstFrameWallclockMs,
+    sceneRanges, actionEvents, sceneActions,
+    pointToCanvasPixel, resolveActionRange, clickEventsInVideoSeconds,
   };
+}
+
+function pickTarget(windows, targetWindowId) {
+  if (targetWindowId != null) {
+    const t = windows.find((w) => w.id === targetWindowId);
+    if (!t) fatal(
+      `--target-window ${targetWindowId} not in meta. Available:\n` +
+      windows.map((w) => `  id=${w.id}  ${w.app}`).join("\n")
+    );
+    return t;
+  }
+  if (windows.length > 1) fatal(
+    `meta sidecar has ${windows.length} windows; pass --target-window <id>. Available:\n` +
+    windows.map((w) => `  id=${w.id}  ${w.app}  canvasRect=[${(w.canvasRect||[]).join(",")}]`).join("\n")
+  );
+  return windows[0];
 }
 
 function secondsFromWallclock(wallclockMs, firstFrameWallclockMs) {
@@ -178,24 +136,14 @@ function fatal(msg) {
   process.exit(5);
 }
 
-/**
- * Auto-propagate the meta sidecar (and optionally a captions sidecar) from
- * one stage's input to its output, so users don't have to `cp` between
- * pipeline scripts. Skipped silently if the input sidecar is missing.
- */
 function propagateSidecars(inputMp4, outputMp4, { skipCaptions = false } = {}) {
-  const inMeta = inputMp4 + ".meta.json";
+  const inMeta  = inputMp4  + ".meta.json";
   const outMeta = outputMp4 + ".meta.json";
-  if (fs.existsSync(inMeta) && inMeta !== outMeta) {
-    fs.copyFileSync(inMeta, outMeta);
-  }
-  if (!skipCaptions) {
-    const inCap  = inputMp4.replace(/\.[^.]+$/, "")  + ".captions.json";
-    const outCap = outputMp4.replace(/\.[^.]+$/, "") + ".captions.json";
-    if (fs.existsSync(inCap) && inCap !== outCap) {
-      fs.copyFileSync(inCap, outCap);
-    }
-  }
+  if (fs.existsSync(inMeta) && inMeta !== outMeta) fs.copyFileSync(inMeta, outMeta);
+  if (skipCaptions) return;
+  const inCap  = inputMp4.replace(/\.[^.]+$/,  "") + ".captions.json";
+  const outCap = outputMp4.replace(/\.[^.]+$/, "") + ".captions.json";
+  if (fs.existsSync(inCap) && inCap !== outCap) fs.copyFileSync(inCap, outCap);
 }
 
 module.exports = { loadContext, propagateSidecars, SUPPORTED_SCHEMA_VERSION };

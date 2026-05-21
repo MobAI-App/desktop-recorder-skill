@@ -5,8 +5,8 @@
 
 You're installing two things:
 
-1. **`deskagent`** — the native macOS CLI (ScreenCaptureKit recorder + AXPress driver + Vision OCR).
-2. **The skill** — `skills/desktop-recorder/` from this repo, copied into the user's agent skills directory.
+1. **`deskagent`** - the native macOS CLI (ScreenCaptureKit recorder + AXPress driver + Vision OCR).
+2. **The skill** - `skills/desktop-recorder/` from this repo, copied into the user's agent skills directory.
 
 Total time: ~2 minutes if Homebrew is already installed.
 
@@ -14,7 +14,7 @@ Total time: ~2 minutes if Homebrew is already installed.
 
 ## Pre-flight checks
 
-Run these and stop if anything fails — don't try to "fix" missing prerequisites silently.
+Run these and stop if anything fails - don't try to "fix" missing prerequisites silently.
 
 ```bash
 sw_vers -productVersion           # expect 14.x or higher (Sonoma+)
@@ -25,11 +25,11 @@ If `uname -m` reports `x86_64`, skip Option A (the brew bottle is arm64-only) an
 
 ---
 
-## Step 1 — Install `deskagent`
+## Step 1 - Install `deskagent`
 
 Pick one of three options. The agent should pick **A** by default and fall back to the others if A fails.
 
-### Option A — Homebrew (recommended for Apple Silicon, macOS 14+)
+### Option A - Homebrew (recommended for Apple Silicon, macOS 14+)
 
 ```bash
 brew install mobai-app/tap/deskagent
@@ -37,9 +37,9 @@ deskagent --version              # expect 0.2.0 or newer
 ```
 
 Pros: one command, auto-updates via `brew upgrade`.
-Cons: Apple Silicon only (the bottle is arm64); each `brew upgrade` re-prompts macOS for Screen Recording (ad-hoc signed binary, fresh identity per release — see Step 2).
+Cons: Apple Silicon only (the bottle is arm64); each `brew upgrade` re-prompts macOS for Screen Recording (ad-hoc signed binary, fresh identity per release - see Step 2).
 
-### Option B — Download a pre-built binary from GitHub Releases
+### Option B - Download a pre-built binary from GitHub Releases
 
 ```bash
 # Pick the latest release version
@@ -57,7 +57,7 @@ deskagent --version
 Pros: no Homebrew needed; can pin a specific version with `LATEST=v0.2.0`.
 Cons: manual `xattr` step (Gatekeeper marks downloaded binaries as quarantined); Apple Silicon only; no auto-updates.
 
-### Option C — Build from source
+### Option C - Build from source
 
 ```bash
 # Requires Xcode 15+ / Swift 5.9+ toolchain
@@ -72,7 +72,7 @@ Cons: needs Xcode toolchain installed (~10 GB) and a couple of minutes to compil
 
 ---
 
-## Step 2 — Grant macOS permissions
+## Step 2 - Grant macOS permissions
 
 `deskagent record` needs **Screen Recording**. `deskagent control` additionally needs **Accessibility**. macOS prompts on first use; pre-trigger them:
 
@@ -92,7 +92,7 @@ After granting, run `deskagent doctor` again. **Both must report green** before 
 
 ---
 
-## Step 3 — Register the skill
+## Step 3 - Register the skill
 
 The skill is the `skills/desktop-recorder/` folder from this repo. Where it goes depends on the agent runtime:
 
@@ -144,7 +144,7 @@ assets/              ← examples + templates
 
 ---
 
-## Step 4 — Verify end-to-end
+## Step 4 - Verify end-to-end
 
 ```bash
 deskagent doctor                                            # both green

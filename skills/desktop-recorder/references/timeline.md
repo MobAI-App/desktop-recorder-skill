@@ -14,7 +14,7 @@ type SceneBoundary = {
   scene_index:  number
   startedAtMs:  number     // ms since control run start
   endedAtMs:    number     // === startedAtMs for boundary events
-  startedAtWallclockMs: number    // Unix-epoch ms — anchor for video time
+  startedAtWallclockMs: number    // Unix-epoch ms - anchor for video time
   endedAtWallclockMs:   number
   coordinate_space: "window" | "screen"
 }
@@ -69,7 +69,7 @@ this by hand.
 Both files agree on `scene_id`. Action references in screenplay
 directives (`fromAction`, `toAction`) use the canonical `action_id =
 "${scene_id}/${action_index}"`. Resolution is hard-failure on the
-editing side — missing IDs print the available IDs and exit non-zero.
+editing side - missing IDs print the available IDs and exit non-zero.
 
 ## Coordinate space
 
@@ -91,6 +91,6 @@ screenSpace:  pixel = canvasRect.x + (point - frameCG.x) * canvasRect.w / frameC
    `scene_id`.
 3. `action_id` is unique across the timeline (since scene IDs are
    unique and action indices are local).
-4. `record_start` / `record_stop` markers are NOT in the timeline —
+4. `record_start` / `record_stop` markers are NOT in the timeline -
    the screenplay doesn't describe them. The recording's
    `firstFrameWallclockMs` is the only video anchor.

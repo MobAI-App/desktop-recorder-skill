@@ -28,10 +28,10 @@ Ordering matters:
 
 1. **highlights** burns ripples + cursor sprite onto source-time frames,
    and emits the captions sidecar (not burned).
-2. **zoom** transforms the framed canvas uniformly — ripples + cursor
+2. **zoom** transforms the framed canvas uniformly - ripples + cursor
    come along for free.
 3. **captions** burns captions in OUTPUT-frame coords (viewport
-   pixels), AFTER zoom — so the zoom transformation never crops them.
+   pixels), AFTER zoom - so the zoom transformation never crops them.
 4. **speedups** re-times frames; remaps the captions sidecar through
    the warp and emits `<out>.timewarp.json`.
 5. **export** trims by `screenplay.trim` (scene IDs); if a
@@ -46,7 +46,7 @@ previous output.
 Reads click positions from the timeline (`action == "click"` events).
 Burns soft ripples at click coords + a synthetic cursor sprite (arrow
 during motion, pointing-hand on click). Also writes
-`<out>.captions.json` from `screenplay.scenes[].caption` — captions are
+`<out>.captions.json` from `screenplay.scenes[].caption` - captions are
 NOT burned here (see `add_captions.js`).
 
 | Flag | Effect |
@@ -57,10 +57,10 @@ NOT burned here (see `add_captions.js`).
 | `--cursor-size N` | Procedural sprite longest edge in px. Default `max(64, videoHeight * 0.07)`. |
 | `--cursor-png PATH` | Use this PNG for the arrow sprite instead of the procedural one (skips `deskagent cursor-png`). User owns sizing. |
 | `--cursor-png-pointing PATH` | Pointing-hand sprite for the click frame. Optional; falls back to `--cursor-png` if absent (no swap). |
-| `--cursor-hotspot X,Y` | Arrow hotspot — the sprite-pixel that should land on the click coord (NOT the sprite's geometric center). Default `0,0` (top-left tip). |
+| `--cursor-hotspot X,Y` | Arrow hotspot - the sprite-pixel that should land on the click coord (NOT the sprite's geometric center). Default `0,0` (top-left tip). |
 | `--cursor-hotspot-pointing X,Y` | Pointing hotspot. When `--cursor-png-pointing` is set, the sprite-pixel that lands on the click. When pointing falls back to the arrow sprite, defaults to `--cursor-hotspot`. With the procedural pointing-hand sprite, defaults to `12/32, 1/32` of `--cursor-size`. |
 | `--ripple-color r:g:b:a` | Procedural ripple color + peak alpha. Default `255:255:255:180`. |
-| `--ripple-sprite PATH` | Custom animated sprite (video w/ alpha — `.mov` qtrle, APNG, transparent WebM). Overrides the procedural ring. Plays once per click. |
+| `--ripple-sprite PATH` | Custom animated sprite (video w/ alpha - `.mov` qtrle, APNG, transparent WebM). Overrides the procedural ring. Plays once per click. |
 
 ## `add_zoom.js`
 
@@ -89,7 +89,7 @@ already contains a real cursor. Pass `--no-cursor-sprite` to
 falls back to interpolating click positions, same as BG mode. If you
 want the camera to follow the recorded HID cursor track instead,
 provide `<input>.mouse-path.json` (written by `deskagent control
---mouse-path`) — currently the script reads only clicks from the
+--mouse-path`) - currently the script reads only clicks from the
 timeline, so a future flag will pull mouse-path samples directly.
 
 ## `add_captions.js`
@@ -117,10 +117,10 @@ text or timing without re-running highlights.
 
 Writes two sidecars beside the output:
 
-- **`<out>.timewarp.json`** — piecewise map of src↔dst seconds + factor
+- **`<out>.timewarp.json`** - piecewise map of src↔dst seconds + factor
   per segment. Consumed by `export_video.js` for trim math, and
   available to any downstream consumer that lives in source time.
-- **`<out>.captions.json`** — input captions remapped through the warp
+- **`<out>.captions.json`** - input captions remapped through the warp
   (start/end remapped per segment).
 
 | Flag | Effect |
@@ -128,7 +128,7 @@ Writes two sidecars beside the output:
 | `--target-window <id>` | REQUIRED for multi-window composites. |
 | `--debug` | Print the ffmpeg filtergraph on stderr. |
 
-Burned-in pixels (ripples, cursor, captions) come along for free —
+Burned-in pixels (ripples, cursor, captions) come along for free -
 ffmpeg just re-times the rendered frames.
 
 ## `export_video.js`
@@ -174,6 +174,6 @@ capture region; crop only menu bar / taskbar in post.
 
 ## `copy.md` generation
 
-`node scripts/generate_copy.js timeline.json prompt.txt copy.md` —
+`node scripts/generate_copy.js timeline.json prompt.txt copy.md` -
 reads scene captions / intents from the timeline and produces title /
 short post / Shorts title / thumbnail text. Hand-rewrite as needed.

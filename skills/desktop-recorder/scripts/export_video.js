@@ -1,23 +1,9 @@
 #!/usr/bin/env node
-/**
- * Trim and crop the recording to the target format.
- *
- *   node export_video.js <input.mp4> <screenplay.json> <timeline.json> <out.mp4> <format>
- *
- * format ∈ { vertical_9_16, horizontal_16_9, square_1_1 }
- *
- * Trim window:
- *   screenplay.trim.beforeScene  (scene id)  →  head cut at that scene's tStart
- *   screenplay.trim.afterScene   (scene id)  →  tail cut at that scene's tEnd + 600 ms pad
- *   Defaults: first scene's start, last scene's end + 600 ms.
- *
- * If <input>.timewarp.json exists (emitted by add_speedups.js), the
- * source-time trim points are mapped to destination time so we cut the
- * correct frames in the sped-up output.
- *
- * Flags:
- *   --target-window <id>   REQUIRED for multi-window meta sidecars.
- */
+// export_video.js <input.mp4> <screenplay.json> <timeline.json> <out.mp4> <format>
+//
+// format in { vertical_9_16, horizontal_16_9, square_1_1 }.
+// Trim bounds come from screenplay.trim (scene ids); a <input>.timewarp.json
+// next to the input maps source-time bounds to dst-time before cutting.
 
 const fs = require("fs");
 const { spawnSync } = require("child_process");
@@ -50,20 +36,12 @@ const { w: TW, h: TH } = FORMATS[FORMAT];
 if (!fs.existsSync(INPUT)) { console.error(`not found: ${INPUT}`); process.exit(3); }
 
 const ctx = loadContext({
-  inputMp4: INPUT,
-  screenplayPath: SCREENPLAY,
-  timelinePath: TIMELINE,
+  inputMp4: INPUT, screenplayPath: SCREENPLAY, timelinePath: TIMELINE,
   targetWindowId: TARGET_WINDOW,
 });
 
-// ---------------------------------------------------------------------------
-// resolve trim window in source-time (seconds)
-
 const sceneIds = ctx.screenplay.scenes.map((s) => s.id);
-if (sceneIds.length === 0) {
-  console.error(`screenplay has no scenes; nothing to export`);
-  process.exit(2);
-}
+if (sceneIds.length === 0) { console.error(`screenplay has no scenes; nothing to export`); process.exit(2); }
 
 const trim = ctx.screenplay.trim || {};
 const headScene = trim.beforeScene ?? sceneIds[0];
@@ -75,10 +53,7 @@ if (!headRange) { console.error(`trim.beforeScene "${headScene}" not in timeline
 if (!tailRange) { console.error(`trim.afterScene "${tailScene}" not in timeline`);   process.exit(2); }
 
 const srcStart = Math.max(0, headRange.tStart);
-const srcEnd   = tailRange.tEnd + 0.6;   // 600ms tail pad
-
-// ---------------------------------------------------------------------------
-// map through timewarp if present (the input mp4 may already be sped up)
+const srcEnd   = tailRange.tEnd + 0.6;
 
 const warpPath = INPUT + ".timewarp.json";
 let dstStart = srcStart, dstEnd = srcEnd;
@@ -86,26 +61,19 @@ if (fs.existsSync(warpPath)) {
   const warp = JSON.parse(fs.readFileSync(warpPath, "utf8"));
   dstStart = srcSecondsToDst(srcStart, warp);
   dstEnd   = srcSecondsToDst(srcEnd,   warp);
-  console.log(`Trim (src ${srcStart.toFixed(2)}s..${srcEnd.toFixed(2)}s) → (dst ${dstStart.toFixed(2)}s..${dstEnd.toFixed(2)}s) via ${warpPath}`);
+  console.log(`Trim (src ${srcStart.toFixed(2)}s..${srcEnd.toFixed(2)}s) -> (dst ${dstStart.toFixed(2)}s..${dstEnd.toFixed(2)}s)`);
 } else {
   console.log(`Trim (${srcStart.toFixed(2)}s..${srcEnd.toFixed(2)}s)  format=${FORMAT}  ${TW}x${TH}`);
 }
-
-// ---------------------------------------------------------------------------
-// scale + pad to target, single ffmpeg pass
 
 const vf = `scale=w='if(gt(a,${TW}/${TH}),${TW},-2)':h='if(gt(a,${TW}/${TH}),-2,${TH})',` +
            `pad=${TW}:${TH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
 
 const r = spawnSync("ffmpeg", [
-  "-y",
-  "-ss", dstStart.toFixed(3),
-  "-to", dstEnd.toFixed(3),
-  "-i", INPUT,
+  "-y", "-ss", dstStart.toFixed(3), "-to", dstEnd.toFixed(3), "-i", INPUT,
   "-vf", vf,
   "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
-  "-movflags", "+faststart",
-  "-an",
+  "-movflags", "+faststart", "-an",
   OUTPUT,
 ], { stdio: ["ignore", "ignore", "pipe"] });
 
@@ -114,9 +82,7 @@ if (r.status !== 0) {
   console.error(r.stderr.toString().split("\n").slice(-30).join("\n"));
   process.exit(r.status ?? 5);
 }
-console.log(`Exported → ${OUTPUT}`);
-
-// ---------------------------------------------------------------------------
+console.log(`Exported -> ${OUTPUT}`);
 
 function srcSecondsToDst(srcSec, warp) {
   for (const seg of warp.segments) {

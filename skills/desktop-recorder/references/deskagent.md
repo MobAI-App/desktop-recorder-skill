@@ -1,4 +1,4 @@
-# `deskagent` — CLI surface
+# `deskagent` - CLI surface
 
 Native macOS recorder + deterministic input replayer + AX/OCR inspector.
 ScreenCaptureKit captures occluded/minimized windows. macOS only.
@@ -35,7 +35,7 @@ deskagent list --json
 ```
 
 Emits `{ displays: [...], windows: [{id, pid, app, bundleID, title, x, y, width, height, onScreen}] }`.
-**Window IDs are per-launch** — re-list before each `record`. Add
+**Window IDs are per-launch** - re-list before each `record`. Add
 `--all` to surface occluded / minimized windows (`onScreen: false`).
 
 Pick one:
@@ -58,8 +58,8 @@ deskagent inspect --window <id> \
 
 Two complementary sources, both on by default:
 
-- `--ax` — native AppKit; one entry per AX element (`role`, `label`, `bbox`).
-- `--ocr` — Vision text recognition; works on any pixels (Wails/Electron/Canvas).
+- `--ax` - native AppKit; one entry per AX element (`role`, `label`, `bbox`).
+- `--ocr` - Vision text recognition; works on any pixels (Wails/Electron/Canvas).
 
 Filters (repeatable): `--label` (case-insensitive substring), `--role`
 (exact AX role). When `--label` matches AX, the OCR pass is skipped.
@@ -88,7 +88,7 @@ Exit codes: `0` found · `1` absent · `2` error. `--absent` inverts.
 
 `--label` is AND across flags; `--label-any` is OR across CSV entries.
 JSON returns `{ found, source, label, role, center, bbox }` for the
-first match — pipe straight into a click.
+first match - pipe straight into a click.
 
 ### `deskagent screenshot`
 
@@ -99,12 +99,12 @@ deskagent screenshot --window <id> \
     [--out path.jpg] [--json]
 ```
 
-JPEG by default — PNG via `--out *.png`. Defaults: `quality=85`,
+JPEG by default - PNG via `--out *.png`. Defaults: `quality=85`,
 `max-dim=1568` (Claude's resize threshold), output
 `$TMPDIR/deskagent/<window-id>-<ms>.jpg`. JSON emits `{path,
 pixelSize, windowFrameCG, backingScale, format}`.
 
-`--annotate-bboxes` overlays AX (cyan) + OCR (yellow) rectangles —
+`--annotate-bboxes` overlays AX (cyan) + OCR (yellow) rectangles -
 useful for visual verification of which element a label resolves to.
 
 ## Recording: `deskagent record`
@@ -120,7 +120,7 @@ deskagent record /tmp/demo.mp4 --window "$ID" \
 kill -INT "$(cat /tmp/rec.pid)"; wait
 ```
 
-**Never `kill -9`** — the mp4's moov atom won't flush.
+**Never `kill -9`** - the mp4's moov atom won't flush.
 
 ### Multi-source flags
 
@@ -181,16 +181,16 @@ Action kinds:
 
 | Action | Required | Optional |
 |---|---|---|
-| `wait` | `ms` | — |
+| `wait` | `ms` | - |
 | `move` | `x`, `y` | `duration_ms` (interpolate if > 0) |
 | `click` | `x`, `y` | `button` (`left`/`right`) |
 | `double_click` | `x`, `y` | `button` |
 | `drag` | `x`, `y`, `to_x`, `to_y` | `duration_ms` (default 400) |
-| `type` | `text` | — (posts Unicode via `keyboardSetUnicodeString`) |
-| `key` | `combo` | — (`cmd+s`, `shift+tab`, `escape`, …) |
-| `scroll` | — | `dx`, `dy` (line-based wheel deltas) |
+| `type` | `text` | - (posts Unicode via `keyboardSetUnicodeString`) |
+| `key` | `combo` | - (`cmd+s`, `shift+tab`, `escape`, …) |
+| `scroll` | - | `dx`, `dy` (line-based wheel deltas) |
 
-`coordinate_space: "window"` is the agent default — pair with
+`coordinate_space: "window"` is the agent default - pair with
 `deskagent inspect`'s window-relative coords for portability.
 
 `deskagent control` ignores screenplay's editing-only fields
@@ -209,7 +209,7 @@ deskagent control screenplay.json \
 
 | Flag | Purpose |
 |---|---|
-| `--target-window ID` | Resolve origin via `CGWindowListCopyWindowInfo` (and auto-raise unless `--no-activate`). **Forbidden during an active recording** — see Rule 4. |
+| `--target-window ID` | Resolve origin via `CGWindowListCopyWindowInfo` (and auto-raise unless `--no-activate`). **Forbidden during an active recording** - see Rule 4. |
 | `--target-pid` + `--window-frame` | Explicit; makes no WindowServer call. **Preferred during recording.** |
 | `--background` | Drive without focus shift. AXPress for clicks, `CGEventPostToPid` for keys/scroll. |
 | `--no-activate` | Skip auto-raising the target app. |
@@ -233,7 +233,7 @@ another app" demos.
 
 `--background` caveats:
 
-- **Modifier shortcuts** can drop — briefly activate the target for
+- **Modifier shortcuts** can drop - briefly activate the target for
   essential ones, or use a menu/osascript equivalent.
 - **Apps with no AX exposure** won't accept `--background` clicks. Validate
   with `deskagent inspect --window <id> --ax`.
@@ -294,7 +294,7 @@ type MousePathSample = { tMs: number, x: number, y: number }
 | `durationSeconds` / `frames` / `dropped` | Final tallies; only on `"complete"`. |
 | `windows[i].pid` | Owning process pid; downstream tools use it without re-querying WindowServer. |
 | `windows[i].frameCG` | `[x, y, w, h]` in CG screen points. |
-| `windows[i].canvasRect` | `[x, y, w, h]` in encoded video pixels — where this window is composited. Required for `add_highlights.js` on multi-window. |
+| `windows[i].canvasRect` | `[x, y, w, h]` in encoded video pixels - where this window is composited. Required for `add_highlights.js` on multi-window. |
 
 `add_highlights.js` reads this sidecar to map window-relative points
 into canvas pixels. Multi-window: pass `--target-window <id>` to
@@ -314,5 +314,5 @@ disambiguate.
 | `cmd+X` no-op under `--background` | AppKit reads flag state from global tap | Activate briefly, or use a menu / osascript path. |
 | `--background` click no-op | App has no AX exposure for that element | Drop `--background` for that step, or osascript the action. |
 | `type`'d text never appears in video | `type` finished too close to SIGINT; WebView didn't redraw | Add a 1–2 s `wait` after the last `type`, and `sleep 1` between control completion and the SIGINT. |
-| Overlays land at the wrong time in the video | Meta sidecar missing `firstFrameWallclockMs` | Re-record cleanly — the sidecar is rewritten on SIGINT finalize. |
+| Overlays land at the wrong time in the video | Meta sidecar missing `firstFrameWallclockMs` | Re-record cleanly - the sidecar is rewritten on SIGINT finalize. |
 | Editing script errors on multi-window meta | Omitted `--target-window` | Pass `--target-window <id>` on every editing stage. |
