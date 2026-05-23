@@ -196,6 +196,29 @@ cinematic ranges - don't mix. The highlights stage **hides the cursor
 sprite inside any pan range** (a no-click section has no cursor to show;
 a parked sprite off the panned view just distracts).
 
+**Window for window-space centers.** When a zoom/pan center is in
+`coordinate_space: "window"` (entry-level `coordinate_space`, or the
+screenplay default) and the composition has more than one window, the
+entry **must** set `windowId` to name the target window. The whole entry
+- the static/start center *and* every pan waypoint - resolves in that
+  one window's coordinate space; to travel a pan across windows, use
+  `coordinate_space: "screen"` instead. The directive's `windowId` is the
+  only lever here: unlike action coordinates, a directive is not bound to
+  a scene, so the scene's `windowId` is **not** consulted. Omitting it in
+  a multi-window comp is a hard error naming the entry. (Single-window
+  comps resolve automatically.) `follow_cursor` and the
+  first-action-in-range fallback are exempt - they resolve real recorded
+  actions, which already carry their own window.
+
+**`afterMs` is video time, relative to the segment start.** A waypoint's
+`afterMs` is added to the segment's `tStart`, where `tStart` is the
+anchor action's start **as it appears in `timeline.json`** (canvas/video
+seconds). It is *not* relative to `deskagent control`'s own per-event
+`ms`, which start at 0 inside the script and are offset from video time
+by the recorder + control startup lead-in (~1.4 s). Compute `afterMs`
+from `timeline.json` event times (or as a plain delta after the anchor
+action begins), never from the control script's internal clock.
+
 The per-frame `scale` filter (`eval=frame`) scales the whole canvas by
 the piecewise zoom factor, then bounded `crop` re-centers back to canvas
 dims. Linear ease at each segment's edges (`RAMP_SEC = 0.2`, clamped to

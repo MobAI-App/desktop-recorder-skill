@@ -112,9 +112,20 @@ function loadContext({ recordingDir, screenplayPath, timelinePath }) {
         return e.x >= fx && e.x <= fx + fw && e.y >= fy && e.y <= fy + fh;
       }) ?? null;
     }
-    if (!placement) {
-      const windowPlacements = composition.placements.filter((p) => p.clip.kind === "window");
-      if (windowPlacements.length === 1) placement = windowPlacements[0];
+    const windowPlacements = composition.placements.filter((p) => p.clip.kind === "window");
+    if (!placement && windowPlacements.length === 1) placement = windowPlacements[0];
+    // Ambiguous: a window-space point in a multi-window comp with no way to
+    // tell which window it belongs to. Guessing the first placement silently
+    // maps clicks (and zoom/pan centers) onto the wrong window. Fail with a
+    // fix instead. Clicks carry sceneId; editing directives carry source.
+    if (!placement && !isScreenSpace && windowPlacements.length > 1) {
+      const ids = windowPlacements.map((p) => p.clip.id).join(", ");
+      const what = e.source ? `the ${e.source} center` : `a window-space click in scene "${e.sceneId}"`;
+      const remedy = e.source ? `Set "windowId" on the ${e.source} entry` : `Set "windowId" on that scene`;
+      fatal(
+        `cannot resolve which window ${what} targets (candidates: ${ids}). ` +
+        `${remedy}, or use coordinate_space "screen" so the screen position picks the window.`,
+      );
     }
     if (!placement) placement = composition.placements[0];
     if (!placement) return [e.x, e.y];

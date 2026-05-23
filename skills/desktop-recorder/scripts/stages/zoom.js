@@ -36,6 +36,7 @@ function generate(ctx, { inputLabel = "[afterHighlights]" } = {}) {
       if (z.x != null && z.y != null) {
         [startX, startY] = ctx.pointToCanvasPixel({
           x: Number(z.x), y: Number(z.y),
+          windowId: z.windowId, source: label,
           coordinate_space: z.coordinate_space || ctx.screenplay.coordinate_space || "screen",
         });
       } else {
@@ -68,6 +69,7 @@ function generate(ctx, { inputLabel = "[afterHighlights]" } = {}) {
     } else if (z.x != null && z.y != null) {
       [cx, cy] = ctx.pointToCanvasPixel({
         x: Number(z.x), y: Number(z.y),
+        windowId: z.windowId, source: label,
         coordinate_space: z.coordinate_space || ctx.screenplay.coordinate_space || "screen",
       });
     } else {
@@ -180,8 +182,11 @@ function validatePan(rawPan, range, label, ctx, zEntry) {
     if (!validEases.has(ease)) {
       fatal(`${label}.pan[${j}]: ease must be one of ${[...validEases].join(", ")}`);
     }
+    // All waypoints share the entry's windowId: a window-space pan stays in
+    // one window's coordinate space. To travel across windows, use screen space.
     const [cx, cy] = ctx.pointToCanvasPixel({
       x: Number(w.x), y: Number(w.y),
+      windowId: zEntry.windowId, source: label,
       coordinate_space: zEntry.coordinate_space || ctx.screenplay.coordinate_space || "screen",
     });
     out.push({ t: range.tStart + w.afterMs / 1000, x: cx, y: cy, ease });

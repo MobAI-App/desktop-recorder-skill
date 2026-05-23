@@ -165,6 +165,7 @@ some action, point `toAction` at the next action after it.
     "follow_cursor": false,                // optional; default false
     "x": 244.5, "y": 54.5,                 // optional center; also the implicit "afterMs=0" waypoint for pan
     "coordinate_space": "window",          // optional; defaults to top-level
+    "windowId":     12345,                 // required for window-space centers in multi-window comps
 
     "fromAction":   "open_settings/0",     // required, global ref
     "toAction":     "save/0",              // required, half-open
@@ -187,6 +188,7 @@ some action, point `toAction` at the next action after it.
 | `follow_cursor` | no | If `true`, camera centers on the **synthetic cursor's piecewise-eased path** (the same expression the highlights stage uses for the sprite - no desync). Requires at least one click event inside the range. Mutually exclusive with `pan`. |
 | `x`, `y` | no | Static center. Also serves as the implicit "afterMs=0" waypoint when `pan` is used. Without it, the first action with `x`/`y` inside the range is used. Pure-`wait` ranges need an explicit `x`/`y` (or `follow_cursor: true`). |
 | `coordinate_space` | no | `"window"` or `"screen"`. Defaults to the top-level setting. |
+| `windowId` | conditional | Names the window a window-space center resolves against. **Required** when the center is window-space and the comp has >1 window; the whole entry (static/start center *and* every pan waypoint) resolves in that window's space. A directive is not scene-bound, so the scene's `windowId` is **not** consulted - this is the only lever. Omitting it in a multi-window comp is a hard error. `follow_cursor` and the first-action-in-range fallback are exempt (they resolve real actions). To pan across windows, use `coordinate_space: "screen"`. |
 | `startDelayMs` / `endDelayMs` | no | Signed ms offsets on the start/end. Default `0`. |
 | `pan` | no | Array of waypoints `{ afterMs, x, y, ease? }`. See below. |
 
@@ -202,8 +204,8 @@ moves the camera to a new center, easing from the previous position.
 
 | Field | Required | Notes |
 |---|---|---|
-| `afterMs` | yes | Time from the zoom's effective start (`fromAction.tStart + startDelayMs`). Absolute, not cumulative. |
-| `x`, `y` | yes | Target center coordinates in the entry's `coordinate_space`. |
+| `afterMs` | yes | Time from the zoom's effective start (`fromAction.tStart + startDelayMs`), where `tStart` is the action's time **as recorded in `timeline.json`** (canvas/video seconds). Absolute, not cumulative. *Not* relative to `deskagent control`'s per-event `ms`, which start at 0 inside the script and are offset from video time by the recorder + control startup lead-in (~1.4 s). Compute it from `timeline.json` event times, never the control clock. |
+| `x`, `y` | yes | Target center coordinates in the entry's `coordinate_space`. All waypoints share the entry's `windowId` (window-space pans stay in one window). |
 | `ease` | no (default `in_out`) | `linear` / `in` / `out` / `in_out`. Easing curve into this waypoint. |
 
 **`pan` vs `follow_cursor` - use the right one:**
@@ -333,6 +335,7 @@ Editing scripts additionally validate:
 - `zoom`: `follow_cursor: true` requires at least one click event in the range.
 - `zoom`: `pan: [...]` waypoints must be in strictly increasing `afterMs` order and within the range.
 - `zoom`: `pan` and `follow_cursor: true` are mutually exclusive.
+- `zoom`: a window-space center (static or pan) in a multi-window comp must set the entry's `windowId` (scenes' `windowId` is not consulted for directives).
 - `speed`: factor `> 0` and `!= 1`.
 - `speed`: no overlapping post-offset envelopes.
 - `captions`: entries don't overlap in time (single shared bottom strip).
