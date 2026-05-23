@@ -1,179 +1,264 @@
 # Editing & export
 
-Inputs: `demo.raw.mp4` + `screenplay.json` + `timeline.json` +
-`demo.raw.mp4.meta.json`. Every edit reads all three (see
-[`timeline.md`](./timeline.md) for the anchoring rule).
+Inputs: the recording directory (containing `recording.manifest.json` and
+per-source ProRes 4444 `.mov` clips) + `screenplay.json` + `timeline.json`.
 
-Each stage takes the same four positional args:
+Everything runs in **one ffmpeg invocation**. `scripts/export.js` collects a
+filter fragment from each stage, assembles them into one `filter_complex`,
+and runs ffmpeg once. The per-source clips are decoded once, the final
+mp4 is encoded once - no intermediate files in the hot path, no
+generation loss from per-stage re-encodes.
+
+## Stage order
 
 ```
-<input.mp4>  <screenplay.json>  <timeline.json>  <output.mp4>
+[compose] → [highlights] → [zoom] → [captions] → [speedups] → [final scale/pad] → encode
 ```
 
-Plus `--target-window <id>` whenever the meta sidecar has multiple
-windows. Stages **auto-propagate** the meta + captions sidecars so the
-next stage finds them without a manual `cp`.
+Each stage is a module in `scripts/stages/` exporting two functions:
 
-## Pipeline
+```js
+generate(ctx, { inputLabel }) -> {
+  filters:     ["[in]...[out]", ...],       // ffmpeg filter strings, joined with ';'
+  inputs:      ["[in]"],                    // upstream labels consumed
+  outputs:     "[afterX]",                  // single label produced
+  extraInputs: [{ argv: ["-i", "..."] }],   // additional ffmpeg `-i` blocks
+  sidecars:    { captions?, timewarp? },    // out-of-band data
+}
+
+apply(ctx, inputMov, outputMov)             // debug runner; renders only this stage to a ProRes 4444 .mov
+```
+
+Stages reference their own extra inputs by `${capInput<N>}` placeholders;
+the orchestrator substitutes absolute ffmpeg input indices after counting
+prior stages' extra inputs.
+
+## Orchestrator CLI
 
 ```bash
-node scripts/add_highlights.js demo.raw.mp4   screenplay.json timeline.json demo.hl.mp4     [--target-window $ID]
-node scripts/add_zoom.js       demo.hl.mp4    screenplay.json timeline.json demo.hlz.mp4    [--target-window $ID]
-node scripts/add_captions.js   demo.hlz.mp4   screenplay.json timeline.json demo.hlzc.mp4   [--target-window $ID]
-node scripts/add_speedups.js   demo.hlzc.mp4  screenplay.json timeline.json demo.hlzcs.mp4  [--target-window $ID]
-node scripts/export_video.js   demo.hlzcs.mp4 screenplay.json timeline.json demo.final.mp4 horizontal_16_9 [--target-window $ID]
+node scripts/export.js <recordingDir> <screenplay.json> <timeline.json> <out.mp4> [format] \
+    [--quality standard|high|h264|pro]   default: high (HEVC ~200 Mbps via VideoToolbox)
+    [--width N --height N]               explicit output dims (override format)
+    [--skip <stage>]                     (repeatable; e.g. --skip captions)
+    [--dry-run]                          print ffmpeg cmd without running
+    [--debug]                            print the assembled filtergraph
 ```
 
-Ordering matters:
+`format` is **optional**. When omitted, the export sizes to the user's
+main display's native pixel resolution (so QuickTime plays the result 1:1
+on this machine).
 
-1. **highlights** burns ripples + cursor sprite onto source-time frames,
-   and emits the captions sidecar (not burned).
-2. **zoom** transforms the framed canvas uniformly - ripples + cursor
-   come along for free.
-3. **captions** burns captions in OUTPUT-frame coords (viewport
-   pixels), AFTER zoom - so the zoom transformation never crops them.
-4. **speedups** re-times frames; remaps the captions sidecar through
-   the warp and emits `<out>.timewarp.json`.
-5. **export** trims by `screenplay.trim` (scene IDs); if a
-   `<input>.timewarp.json` exists, source-time trim points are mapped
-   through the warp.
+Named formats:
 
-Skip any stage by skipping its call and pointing the next stage at the
-previous output.
-
-## `add_highlights.js`
-
-Reads click positions from the timeline (`action == "click"` events).
-Burns soft ripples at click coords + a synthetic cursor sprite (arrow
-during motion, pointing-hand on click). Also writes
-`<out>.captions.json` from `screenplay.scenes[].caption` - captions are
-NOT burned here (see `add_captions.js`).
-
-| Flag | Effect |
+| Format | Size |
 |---|---|
-| `--target-window <id>` | REQUIRED for multi-window composites. |
-| `--no-cursor-sprite` | Skip cursor rendering (use for HID-mode recordings). |
-| `--cursor-color RRGGBB` | Tint for the procedural cursor. Default black. |
-| `--cursor-size N` | Procedural sprite longest edge in px. Default `max(64, videoHeight * 0.07)`. |
-| `--cursor-png PATH` | Use this PNG for the arrow sprite instead of the procedural one (skips `deskagent cursor-png`). User owns sizing. |
-| `--cursor-png-pointing PATH` | Pointing-hand sprite for the click frame. Optional; falls back to `--cursor-png` if absent (no swap). |
-| `--cursor-hotspot X,Y` | Arrow hotspot - the sprite-pixel that should land on the click coord (NOT the sprite's geometric center). Default `0,0` (top-left tip). |
-| `--cursor-hotspot-pointing X,Y` | Pointing hotspot. When `--cursor-png-pointing` is set, the sprite-pixel that lands on the click. When pointing falls back to the arrow sprite, defaults to `--cursor-hotspot`. With the procedural pointing-hand sprite, defaults to `12/32, 1/32` of `--cursor-size`. |
-| `--ripple-color r:g:b:a` | Procedural ripple color + peak alpha. Default `255:255:255:180`. |
-| `--ripple-sprite PATH` | Custom animated sprite (video w/ alpha - `.mov` qtrle, APNG, transparent WebM). Overrides the procedural ring. Plays once per click. |
-
-## `add_zoom.js`
-
-**Opt-in.** Only scenes with a `zoom` directive zoom. See
-[`desktop.md`](./desktop.md#zoom-scene-level) for the directive shape.
-
-| Flag | Effect |
-|---|---|
-| `--target-window <id>` | REQUIRED for multi-window composites. |
-| `--ramp S` | Ease-in / ease-out seconds at the segment edges. Default `0.2`. |
-| `--deadzone F` | Cursor may roam this fraction of the zoomed view before the camera pans. Default `0.10`. |
-| `--follow-smoothing F` | EMA alpha for camera catch-up (0..1). Default `0.5`. |
-| `--debug` | Print the ffmpeg filtergraph on stderr. |
-
-Implementation notes:
-
-- Uses ffmpeg's `zoompan` filter (not `crop`, whose `w`/`h` are
-  init-only) so all zoom geometry is re-evaluated every frame.
-- Hard-errors when meta is missing or multi-window without `--target-window`.
-
-### HID-mode (real cursor in the recording)
-
-When `deskagent record` ran WITHOUT `--no-cursor`, the captured window
-already contains a real cursor. Pass `--no-cursor-sprite` to
-`add_highlights.js` (so you don't double up) and the cursor-follow zoom
-falls back to interpolating click positions, same as BG mode. If you
-want the camera to follow the recorded HID cursor track instead,
-provide `<input>.mouse-path.json` (written by `deskagent control
---mouse-path`) - currently the script reads only clicks from the
-timeline, so a future flag will pull mouse-path samples directly.
-
-## `add_captions.js`
-
-Burns captions at fixed OUTPUT-frame coords (centered horizontally, at
-configurable Y) so the zoom transformation upstream doesn't crop them.
-Reads `<input>.captions.json` (propagated from highlights); falls back
-to deriving captions from `screenplay.scenes[].caption` if the sidecar
-is missing.
-
-| Flag | Effect |
-|---|---|
-| `--target-window <id>` | Only required if the meta sidecar has multiple windows. |
-| `--caption-y FRACTION` | 0 = top, 1 = bottom. Default `0.85`. |
-| `--caption-font-size N` | Default `max(28, videoHeight * 0.04)`. |
-| `--no-captions` | Passthrough (sidecar carried forward unchanged). |
-
-Hand-edit `<input>.captions.json` between zoom and captions to tweak
-text or timing without re-running highlights.
-
-## `add_speedups.js`
-
-**Opt-in.** Only scenes with a `speed` directive re-time. See
-[`desktop.md`](./desktop.md#speed-scene-level) for the directive shape.
-
-Writes two sidecars beside the output:
-
-- **`<out>.timewarp.json`** - piecewise map of src↔dst seconds + factor
-  per segment. Consumed by `export_video.js` for trim math, and
-  available to any downstream consumer that lives in source time.
-- **`<out>.captions.json`** - input captions remapped through the warp
-  (start/end remapped per segment).
-
-| Flag | Effect |
-|---|---|
-| `--target-window <id>` | REQUIRED for multi-window composites. |
-| `--debug` | Print the ffmpeg filtergraph on stderr. |
-
-Burned-in pixels (ripples, cursor, captions) come along for free -
-ffmpeg just re-times the rendered frames.
-
-## `export_video.js`
-
-```bash
-node scripts/export_video.js <in.mp4> <screenplay.json> <timeline.json> <out.mp4> <format> [--target-window <id>]
-```
-
-| Format | Dims |
-|---|---|
+| `display` *(default when omitted)* | NSScreen.mainScreen × backingScale (e.g., 3456×2234 on a 16" MBP) |
 | `horizontal_16_9` | 1920 × 1080 |
 | `square_1_1` | 1080 × 1080 |
 | `vertical_9_16` | 1080 × 1920 |
+| `hd_720` | 1280 × 720 |
+| `uhd_4k` | 3840 × 2160 |
 
-Trim window comes from `screenplay.trim`:
+`--width N --height N` overrides any format choice with exact pixel dims.
 
+Quality presets:
+
+| `--quality` | Codec | Notes |
+|---|---|---|
+| `standard` | `hevc_videotoolbox` -b:v 50M | Smaller, content-aware encoder may go well below the cap |
+| `high` *(default)* | `hevc_videotoolbox` -b:v 200M | Same encoder, much higher ceiling |
+| `h264` | `libx264 crf=18 veryfast` | Wider-compat fallback; soft on sub-pixel UI |
+| `pro` | `prores_ks` profile 3 (422 HQ) | Master / further-editing output; huge files |
+
+Composition canvas (from `screenplay.composition.canvas`) is letterboxed
+into the requested output size with `scale=W:H:force_original_aspect_ratio=decrease,pad=W:H:(ow-iw)/2:(oh-ih)/2:color=black`.
+
+## Per-stage debug CLI
+
+Every stage exposes the same shape:
+
+```bash
+# Print the stage's filter fragment as JSON (no ffmpeg run).
+node scripts/stages/<stage>.js generate <recDir> <screenplay> <timeline>
+
+# Render only this stage's effect to a ProRes 4444 .mov, taking <in.mov> as
+# its upstream input. Useful to verify what just one stage does.
+node scripts/stages/<stage>.js generate <recDir> <screenplay> <timeline> \
+    --apply <in.mov> <out.mov>
 ```
-head = scene[ trim.beforeScene ].tStart            (defaults to first scene)
-tail = scene[ trim.afterScene  ].tEnd + 600 ms     (defaults to last scene)
+
+For `compose`, `--apply` takes only `<out.mov>` - the inputs are the
+per-source clips in the recording dir, not a single video.
+
+## Stage descriptions
+
+### `compose`
+
+Reads `composition` from the screenplay, opens each per-source clip as a
+separate ffmpeg input, trims the head of each by `shared.headTrimsByPath`
+(so every clip's t=0 maps to the shared timeline start), aspect-fits
+inside its placement rect, overlays them onto the canvas background with
+alpha preserved.
+
+**Never upscales by default.** When a clip's source pixels fit inside its
+slot in both axes, it sits at native pixel size centered in the slot
+(no scaling, sharp). Only scales down when source > slot. Opt-in via
+`composition.upscale: true` (or per-element `upscale: true`) to force
+fit-to-slot.
+
+Layout helpers (`composition.layout`):
+
+| Mode | Slots |
+|---|---|
+| `auto` | 1 clip = full canvas (no padding). 2 = `side-by-side`. 3+ = `grid`. |
+| `side-by-side` | A row of N slots; element `weight` controls column widths. |
+| `stack` | A column of N slots; element `weight` controls row heights. |
+| `grid` | 2-column grid, `ceil(N/2)` rows. |
+
+Output label: `[afterCompose]` (carries alpha).
+
+### `highlights`
+
+Two synthetic overlays on top of the composed canvas:
+
+1. **Cursor sprite.** An arrow (via `deskagent cursor-png --type arrow`)
+   drawn at a piecewise cursor-path expression that eases between click
+   positions (cubic ease-in/out, ≤0.55 s per move at ~1400 px/s baseline).
+   A pointing-hand sprite (`--type pointing`) replaces the arrow for
+   ~220 ms around each click, so the cursor visibly "presses".
+2. **Click ripple.** A procedural soft expanding-ring sprite (alpha .mov
+   generated once via `ffmpeg ... geq`) overlay'd at each click position
+   with `-itsoffset <click.t>` so each click plays its own copy.
+
+User overrides on `screenplay.highlights`:
+
+```jsonc
+"highlights": {
+  "ripple": {
+    "sprite":     "/path/to/anim.mov",   // optional override; alpha .mov / APNG / transparent webm
+    "color":      "FFFFFF",              // procedural ring color RRGGBB; default white
+    "size":       160,                   // procedural sprite longest edge in canvas px; default 160
+    "durationMs": 520                    // procedural sprite duration; default 520
+  },
+  "cursor": {
+    "arrow":    "/path/to/arrow.png",    // optional; default = deskagent cursor-png --type arrow
+    "pointing": "/path/to/pointing.png", // optional; default = --type pointing
+    "size":     64                       // longest edge in canvas px; default 64
+  }
+}
 ```
 
-Both are resolved against the timeline. If a `<input>.timewarp.json`
-sits next to the input, the source-time bounds are mapped through it so
-the cut lands on the right frames in the sped-up output.
+| Field | Required | Notes |
+|---|---|---|
+| `ripple.sprite` | no | Custom animated sprite with alpha. When set, `color`/`size`/`durationMs` are ignored. Each click plays one copy starting from PTS 0 via `-itsoffset`. |
+| `ripple.color` | no | Procedural ring fill color (RRGGBB). Default `FFFFFF`. |
+| `ripple.size` | no | Procedural sprite dimensions in canvas pixels. Default `160`. |
+| `ripple.durationMs` | no | Procedural sprite length. Default `520`. |
+| `cursor.arrow` | no | Path to a PNG with alpha. |
+| `cursor.pointing` | no | Path to a PNG with alpha; shown for ~220 ms around each click, replacing the arrow so the cursor visibly "presses". |
+| `cursor.size` | no | Longest edge in canvas pixels (when rendering defaults via `deskagent cursor-png`). Default `64`. |
+| `cursor.hotspotArrow` | no | `[x, y]` in sprite pixels - the pixel that should land EXACTLY on the click point. Default `[0, 0]` (matches the default arrow whose tip is top-left). Required for custom PNGs whose tip isn't at the corner. |
+| `cursor.hotspotPointing` | no | Same idea for the pointing sprite. Defaults to `hotspotArrow`. |
 
-## Captions sidecar shape
+Implementation notes:
 
-```json
-[
-  { "startMs": 500,  "endMs": 850,  "text": "Switch to Automation" },
-  { "startMs": 2050, "endMs": 2150, "text": "Back to Testing" }
-]
-```
+- Arrow's `enable=` is the boolean-NOT of all click windows; pointing's
+  `enable=` is the OR. Same path expression for both, so swap is
+  seamless.
+- The cursor path is shared with `zoom`'s `follow_cursor: true` via
+  `lib/cursor-path.js` - camera centers on the sprite's actual position,
+  no desync during glides.
+- Procedural ripple sprite is cached to
+  `~/.cache/deskagent-skill/ripple-{size}-{durSec}-{color}.mov`; only
+  the first export of a given configuration pays the geq render cost.
+- Pre-record: pass `--no-cursor` to `deskagent record` so the real OS
+  cursor doesn't fight the synthetic one.
 
-After `add_speedups.js`, the same file beside the sped-up mp4 has
-`startMs`/`endMs` rewritten through the warp.
+Output label: `[afterHighlights]`.
 
-## Window sizing matters more than crop
+### `zoom`
 
-A 1440 × 900 window on a 3456 × 2234 retina display means the export
-downscales mostly empty pixels. Size the demo window to fill the
-capture region; crop only menu bar / taskbar in post.
+Reads `screenplay.zoom[]`. Each entry creates one segment whose center
+comes from one of three sources (mutually exclusive):
 
-## `copy.md` generation
+- **Static center** - `x`/`y` on the entry, or the first action with
+  coords in range.
+- **Follow cursor** - `follow_cursor: true`. Camera centers on the
+  synthetic-cursor path (shared with the highlights stage).
+- **Pan waypoints** - `pan: [...]`. Explicit list of waypoints
+  `{ afterMs, x, y, ease? }`. Camera holds at the segment's start center
+  (the entry's `x`/`y` or first action with coords in range), then eases
+  through each waypoint, then holds at the last waypoint until the
+  segment ends.
 
-`node scripts/generate_copy.js timeline.json prompt.txt copy.md` -
-reads scene captions / intents from the timeline and produces title /
-short post / Shorts title / thumbnail text. Hand-rewrite as needed.
+Use `follow_cursor` for click-driven ranges and `pan` for no-click
+cinematic ranges - don't mix. The highlights stage **hides the cursor
+sprite inside any pan range** (a no-click section has no cursor to show;
+a parked sprite off the panned view just distracts).
+
+The per-frame `scale` filter (`eval=frame`) scales the whole canvas by
+the piecewise zoom factor, then bounded `crop` re-centers back to canvas
+dims. Linear ease at each segment's edges (`RAMP_SEC = 0.2`, clamped to
+half the segment length so short zooms still get both ramps).
+
+Pan easing modes (per waypoint, default `in_out`):
+
+| `ease` | curve on u ∈ [0,1] |
+|---|---|
+| `linear` | u |
+| `in` | u² (ease in only) |
+| `out` | 1 − (1 − u)² (ease out only) |
+| `in_out` | cubic ease-in/out |
+
+Output label: `[afterZoom]`.
+
+### `captions`
+
+Reads `screenplay.captions[]` (top-level directive array - see
+[`desktop.md`](./desktop.md#captions)). Each entry's text is rendered to a
+transparent PNG via `deskagent text-png` and overlay'd at a single
+centered bottom strip on the canvas with `enable=between(t, ...)`.
+
+Caption entries may not overlap in time (single shared strip) - overlap
+is a hard error.
+
+Output label: `[afterCaptions]`.
+
+### `speedups`
+
+Reads `screenplay.speed[]`. Builds a piecewise `setpts` expression that
+compresses or expands each range by `factor`. Emits a `sidecars.timewarp`
+that `export.js` uses to size the final output `-t` correctly (it caps at
+`last.dstEnd + (sourceDuration - last.srcEnd)` so any post-warp tail
+plays at 1× and contributes to duration).
+
+Output label: `[afterSpeedups]`.
+
+## Skipping stages
+
+`--skip compose` is rejected - compose is the source of inputs. Any other
+stage can be skipped; its output label short-circuits to the previous
+stage's output.
+
+## Sidecars
+
+The orchestrator passes `ctx` (loaded once via `lib/screenplay.js`) and
+collects each stage's `sidecars` for cross-stage data (e.g., speedups'
+`timewarp` consumed by export's duration math). No on-disk intermediate
+sidecars in the hot path.
+
+## What changed vs. the older five-script pipeline
+
+- Five `add_*.js` CLIs + `export_video.js` collapsed into one `export.js`
+  + five `stages/*.js` library modules.
+- No intermediate mp4s between stages; one decode → one filter graph →
+  one encode.
+- Per-stage `--apply` provides the same "look at one stage's output"
+  affordance the old chain gave for free.
+- Quality / final container is a flag on `export.js` rather than the
+  fixed `libx264 crf=18` the old pipeline re-encoded between every
+  stage.
+- Default output size auto-detects the user's display so QuickTime plays
+  the result 1:1 on this machine.
+- Captions moved from per-scene `caption` to a top-level
+  `screenplay.captions[]` directive array, matching zoom/speed's shape.

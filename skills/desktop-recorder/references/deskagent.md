@@ -9,7 +9,7 @@ ScreenCaptureKit captures occluded/minimized windows. macOS only.
 | `inspect <window>` | Discover clickable elements via AX + Vision OCR. Bbox + center in CG points. |
 | `assert <window>` | Cheap yes/no probe for a label. Optimized for tight loops. |
 | `screenshot <window>` | One-shot JPEG (or PNG via `--out *.png`). Sized for LLM context by default. |
-| `record <out>` | Record one or more windows / displays. SIGINT-clean. Writes a `.meta.json` sidecar. |
+| `record <out-dir>` | Record one ProRes 4444 .mov (alpha-preserving) per source + `recording.manifest.json` into the output directory. SIGINT-clean. |
 | `control <script>` | Replay a deterministic JSON script. `--background` drives without focus shift. |
 | `doctor` | Verify Screen Recording + Accessibility grants. `--request-accessibility` triggers the prompt. |
 | `text-png` / `cursor-png` | Render typeset text / cursor sprite to a transparent PNG (for overlay tools). |
@@ -109,47 +109,86 @@ useful for visual verification of which element a label resolves to.
 
 ## Recording: `deskagent record`
 
-`record` does NOT modify source windows. Composites that don't match
-the canvas slot aspect are letterboxed.
+`record` writes one ProRes 4444 `.mov` per source into an output
+directory, plus `recording.manifest.json`. Per-pixel alpha is preserved
+on every clip, so the editor can composite windows onto any background
+without the OS's rounded corners or shadows showing through as black.
 
 ```bash
-deskagent record /tmp/demo.mp4 --window "$ID" \
-    --fps 60 --quality high \
+deskagent record /tmp/demo --window "$ID" \
+    --fps 60 \
     --pid-file /tmp/rec.pid --quiet --json > /tmp/rec.json &
 # … drive …
 kill -INT "$(cat /tmp/rec.pid)"; wait
+# /tmp/demo/ now contains window-<ID>.mov + recording.manifest.json
 ```
 
-**Never `kill -9`** - the mp4's moov atom won't flush.
+**Never `kill -9`** - the .mov's moov atom won't flush.
 
-### Multi-source flags
+**Composition / quality / final-encode** are an editor concern; see
+`editing.md`. `record` always captures BGRA → ProRes 4444 .mov. The
+editor's `export.js` picks the final container, codec, and bitrate.
 
-| Want | Flags |
-|---|---|
-| One app's windows in a grid | `--app Safari` |
-| Two specific windows side-by-side | `--window $A --window $B --layout side-by-side` |
-| Custom weights (e.g. 70/30) | `--weights 70,30` (matches `--window`/`--display` order) |
-| Window over a display backdrop | `--display 1 --window $A` (display becomes 8%-inset back layer) |
-| Vertical "Shorts" frame | `--canvas 1080x1920 --layout stack` |
-| Brand background | `--background "color:1a1a2e" --corner-radius 24 --padding 80` |
+### Source flags
 
-### Output formats
-
-| Extension | Container | `--quality` |
+| Flag | Repeatable | Purpose |
 |---|---|---|
-| `.mp4` / `.m4v` *(default)* | MPEG-4 | `standard` (~3 bpp HEVC) · `high` (~10 bpp HEVC) |
-| `.mov` / `.qt` | QuickTime | HEVC · `pro` (ProRes 422; .mov only) |
+| `--window ID` | yes | One clip per window. |
+| `--display ID` | yes | One clip per display. |
+| `--app NAME` | yes | One clip per matched window (name or bundle id; case-insensitive). |
+| `--window-title S` | no | When `--app` is used, restrict to titles containing S. |
 
-Other flags: `--fps` 10–120 (default 60), `--no-cursor`, `--canvas WxH`
-(default: native single-source, else 2560x1440).
+### Behavior flags
 
-### Color & range (FYI)
+| Flag | Default | Notes |
+|---|---|---|
+| `--fps` | `60` | 10–120. Same fps applied to every clip. |
+| `--supersample N` | `1` | Pixel-density multiplier on top of the display's backing scale (1..4). `1` = device pixels (what's on screen); `2` = 2× supersampled - SCK re-rasterizes AppKit content from vectors so text/UI stay crisp when the export scales clips up or QuickTime pixel-doubles on retina. Costs ~N² bandwidth and disk. |
+| `--no-cursor` | (cursor visible) | Hide system cursor in every clip. The editor's highlights stage draws a synthetic cursor that follows clicks. |
+| `--pid-file PATH` | – | Write the process pid for `kill -INT`. |
+| `--quiet` / `--json` | – | Output mode. |
 
-SCK captures TV-range YUV; encoder tags BT.709 + TV-range. Two paths
-preserve 16–235 luma end-to-end: (a) single-source bypasses Core Image
-entirely; (b) multi-source pre-scales RGB through `CIColorMatrix`
-(x·219/255 + 16/255) so CI emits in-range YUV. Without this, blacks
-crush on QuickTime playback.
+### Output
+
+Each source writes to `<out-dir>/<kind>-<id>.mov` (e.g.
+`window-12345.mov`, `display-1.mov`). `<out-dir>/recording.manifest.json`
+is written after all clips finalize.
+
+JSON stdout (`--json`):
+
+```json
+{
+  "status": "ok",
+  "directory": "/tmp/demo",
+  "manifest": "/tmp/demo/recording.manifest.json",
+  "durationSeconds": 12.3,
+  "fps": 60,
+  "clips": [
+    { "path": "/tmp/demo/window-12345.mov",
+      "source": "window:12345",
+      "frames": 740, "dropped": 0,
+      "startWallclockMs": 1716480000050 }
+  ]
+}
+```
+
+### Manifest sync anchors
+
+Every clip in `recording.manifest.json` carries `startHostNs` and
+`endHostNs`. The editor uses them to compute a shared time window:
+
+- `t0   = max(clip.startHostNs)` - latest first-frame across clips.
+- `tEnd = min(clip.endHostNs)`   - earliest last-frame.
+- Per clip head-trim: `(t0 - clip.startHostNs) / 1e9` seconds.
+- Composited duration: `(tEnd - t0) / 1e9` seconds.
+
+### Alpha & color
+
+Capture is BGRA via SCStream → ProRes 4444 (`yuva444p12le`) via
+AVAssetWriter. Each clip's `alpha` channel reflects the window's real
+shape - areas outside the window's content have `alpha=0`. Compositing
+in the editor (`compose` stage) uses ffmpeg's `overlay`, which respects
+the source alpha natively.
 
 ## Desktop control: `deskagent control`
 
@@ -162,7 +201,7 @@ Full reference: [`desktop.md`](./desktop.md). Minimal shape:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "coordinate_space": "window",
   "scenes": [
     {
@@ -186,7 +225,7 @@ Action kinds:
 | `click` | `x`, `y` | `button` (`left`/`right`) |
 | `double_click` | `x`, `y` | `button` |
 | `drag` | `x`, `y`, `to_x`, `to_y` | `duration_ms` (default 400) |
-| `type` | `text` | - (posts Unicode via `keyboardSetUnicodeString`) |
+| `type` | `text` | `cpm` (chars/minute; overrides default cadence - ~7500 cpm HID, ~3750 cpm per-pid; posts Unicode via `keyboardSetUnicodeString`) |
 | `key` | `combo` | - (`cmd+s`, `shift+tab`, `escape`, …) |
 | `scroll` | - | `dx`, `dy` (line-based wheel deltas) |
 
@@ -261,44 +300,55 @@ process-local and not anchored to the video.
 type MousePathSample = { tMs: number, x: number, y: number }
 ```
 
-## Recording meta sidecar
+## Recording manifest
 
-`deskagent record <output>` writes `<output>.meta.json`:
+`deskagent record <out-dir>` writes `<out-dir>/recording.manifest.json`
+after every clip finalizes (current schema `version: 1`):
 
 ```json
 {
-  "version": 2,
-  "state": "complete",
-  "pixelSize": [2560, 1440],
+  "version": 1,
+  "createdAtWallclockMs": 1778883093800,
   "fps": 60,
-  "firstFrameWallclockMs": 1778883093800,
+  "anchorHostNs": 123456789012345,
   "durationSeconds": 18.4,
-  "frames": 1104,
-  "dropped": 0,
-  "windows": [
+  "clips": [
     {
-      "id": 245663, "app": "MobAI", "bundleID": "run.mobai.app", "pid": 40115,
+      "path": "window-245663.mov",
+      "kind": "window",
+      "id": 245663, "pid": 40115,
+      "app": "MobAI", "bundleID": "run.mobai.app",
+      "title": "MobAI - Untitled",
       "frameCG": [538, 90, 1190, 831],
+      "pixelSize": [2380, 1662],
       "backingScale": 2.0,
-      "canvasRect": [812, 124, 1708, 1193]
+      "firstFramePtsNs": 0,
+      "lastFramePtsNs": 18400000000,
+      "frameCount": 1104,
+      "droppedFrames": 0,
+      "startHostNs": 123456789012345,
+      "endHostNs":   123475189012345,
+      "startWallclockMs": 1778883093850,
+      "endWallclockMs":   1778883112250
     }
-  ],
-  "displays": []
+  ]
 }
 ```
 
 | Field | Meaning |
 |---|---|
-| `state` | `"recording"` (written at start; survives crashes) or `"complete"` (refreshed at clean finish). |
-| `firstFrameWallclockMs` | Unix-epoch ms of the first encoded frame. Anchor for timeline events. |
-| `durationSeconds` / `frames` / `dropped` | Final tallies; only on `"complete"`. |
-| `windows[i].pid` | Owning process pid; downstream tools use it without re-querying WindowServer. |
-| `windows[i].frameCG` | `[x, y, w, h]` in CG screen points. |
-| `windows[i].canvasRect` | `[x, y, w, h]` in encoded video pixels - where this window is composited. Required for `add_highlights.js` on multi-window. |
+| `clips[].path` | Relative to the manifest's directory. Always `.mov` (ProRes 4444). |
+| `clips[].kind` | `"window"` or `"display"`. |
+| `clips[].pixelSize` | Encoded video pixel dimensions of this clip. |
+| `clips[].firstFramePtsNs` / `lastFramePtsNs` | File-time PTS of first/last frame (first is always 0). |
+| `clips[].startHostNs` / `endHostNs` | Host-time anchors. Use to compute the shared time window across clips (`t0 = max(startHostNs)`, `tEnd = min(endHostNs)`). |
+| `clips[].startWallclockMs` / `endWallclockMs` | Wallclock anchors (also human-readable). |
+| `anchorHostNs` | `max(clips[].startHostNs)` - the composited timeline's t=0 in host time. |
+| `createdAtWallclockMs` | Wallclock when `start` completed; human label. |
 
-`add_highlights.js` reads this sidecar to map window-relative points
-into canvas pixels. Multi-window: pass `--target-window <id>` to
-disambiguate.
+`scripts/export.js` reads the manifest, applies the screenplay's
+`composition` block via the `compose` stage, then chains the other
+editing stages in one ffmpeg pass.
 
 ## Failure modes
 
@@ -314,5 +364,5 @@ disambiguate.
 | `cmd+X` no-op under `--background` | AppKit reads flag state from global tap | Activate briefly, or use a menu / osascript path. |
 | `--background` click no-op | App has no AX exposure for that element | Drop `--background` for that step, or osascript the action. |
 | `type`'d text never appears in video | `type` finished too close to SIGINT; WebView didn't redraw | Add a 1–2 s `wait` after the last `type`, and `sleep 1` between control completion and the SIGINT. |
-| Overlays land at the wrong time in the video | Meta sidecar missing `firstFrameWallclockMs` | Re-record cleanly - the sidecar is rewritten on SIGINT finalize. |
+| Overlays land at the wrong time in the video | Meta sidecar from `scripts/stages/compose.js` missing `firstFrameWallclockMs` | Re-run `scripts/stages/compose.js`; it derives the value from the manifest's host-time anchors. |
 | Editing script errors on multi-window meta | Omitted `--target-window` | Pass `--target-window <id>` on every editing stage. |

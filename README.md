@@ -11,8 +11,8 @@ deterministic input replay, and accessibility / OCR element discovery.
 The skill teaches an agent to:
 
 1. **Explore** with `deskagent list / inspect / screenshot / assert`.
-2. **Author** a `screenplay.json` - scenes of deterministic actions plus
-   per-scene editing directives (`caption`, `zoom`, `speed`) and top-level `trim`.
+2. **Author** a `screenplay.json` - scenes of deterministic actions with
+   per-scene `caption` and top-level `zoom` / `speed` / `trim` directives.
 3. **Normalize state** (window size, theme, start screen).
 4. **Dry-run** against the live UI; confirm with `deskagent assert`.
 5. **Record** with `deskagent record` while `deskagent control` drives

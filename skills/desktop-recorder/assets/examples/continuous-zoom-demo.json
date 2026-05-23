@@ -1,0 +1,33 @@
+{
+  "schema_version": 2,
+  "name": "continuous_zoom_demo",
+  "coordinate_space": "window",
+  "_comment": "Demonstrates: (1) a single zoom range that spans three scenes, so the camera stays at 1.8x throughout without dipping between scenes; (2) pan waypoints that move the camera across the screen while no clicks are happening - the cinematic 'look here, then look there' shot.",
+  "scenes": [
+    { "id": "intro",      "actions": [ { "action": "wait", "ms": 1200 } ] },
+    { "id": "explore",    "actions": [ { "action": "wait", "ms": 5000 } ] },
+    { "id": "click_save", "actions": [
+        { "action": "click", "x": 1300, "y": 820 },
+        { "action": "wait",  "ms": 800 }
+      ] }
+  ],
+  "captions": [
+    { "text": "Settings panel",                       "fromAction": "intro/0",      "durationMs": 1200 },
+    { "text": "Review the sidebar, then the editor", "fromAction": "explore/0",    "toAction":  "click_save/0", "endDelayMs": -100 },
+    { "text": "Save",                                "fromAction": "click_save/0", "durationMs": 800 }
+  ],
+  "zoom": [
+    {
+      "scale": 1.8,
+      "x": 200, "y": 200,
+      "fromAction": "intro/0",
+      "toAction":   "click_save/1",
+      "pan": [
+        { "afterMs": 1200, "x": 200,  "y": 600, "ease": "in_out" },
+        { "afterMs": 3500, "x": 900,  "y": 400, "ease": "in_out" },
+        { "afterMs": 6000, "x": 1300, "y": 820, "ease": "in_out" }
+      ]
+    }
+  ],
+  "trim": { "beforeScene": "intro", "afterScene": "click_save" }
+}

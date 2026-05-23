@@ -54,15 +54,19 @@ type ActionEvent = SceneBoundary & {
 
 ## Mapping to video time
 
-Every editing script anchors via:
+Every editing stage anchors via the recording's `recording.manifest.json`.
+The editor picks a canvas t=0 from the shared time window across clips
+(`t0 = max(clip.startHostNs)` in host time, with the wallclock-equivalent
+used to convert timeline events):
 
 ```
-videoSec = (event.startedAtWallclockMs - meta.firstFrameWallclockMs) / 1000
+t0WallMs = wallclock of the clip whose startHostNs == max(startHostNs)
+videoSec = (event.startedAtWallclockMs - t0WallMs) / 1000
 ```
 
-`firstFrameWallclockMs` lives in the recording's `<out>.meta.json`
-sidecar. Editing scripts read both files; the agent never computes
-this by hand.
+`lib/screenplay.js`'s `loadContext` does this once; stages call
+`ctx.actionEvents.get(actionId).tStart` to read canvas-second timings.
+The agent never computes this by hand.
 
 ## Joining timeline to screenplay
 
@@ -74,13 +78,17 @@ editing side - missing IDs print the available IDs and exit non-zero.
 ## Coordinate space
 
 `x` / `y` are CG screen **points** (not pixels) in the declared
-`coordinate_space`. Editing scripts map to canvas pixels via the meta
-sidecar's `canvasRect` for the chosen `--target-window`:
+`coordinate_space`. Editing stages map to canvas pixels via
+`ctx.pointToCanvasPixel(e)` which finds the action's window placement
+(via the scene's `windowId`) and applies the placement's fitted rect:
 
 ```
-windowSpace:  pixel = canvasRect.x + point * canvasRect.w / frameCG.w
-screenSpace:  pixel = canvasRect.x + (point - frameCG.x) * canvasRect.w / frameCG.w
+windowSpace:  pixel = fit.ox + point * fit.fitW / frameCG.w
+screenSpace:  pixel = fit.ox + (point - frameCG.x) * fit.fitW / frameCG.w
 ```
+
+For multi-window compositions, scenes must carry `windowId` so the
+scene's actions are mapped to the correct window's slot on the canvas.
 
 ## Invariants
 
@@ -93,4 +101,5 @@ screenSpace:  pixel = canvasRect.x + (point - frameCG.x) * canvasRect.w / frameC
    unique and action indices are local).
 4. `record_start` / `record_stop` markers are NOT in the timeline -
    the screenplay doesn't describe them. The recording's
-   `firstFrameWallclockMs` is the only video anchor.
+   `recording.manifest.json` carries per-clip host-time + wallclock
+   anchors that the editor uses to compute the shared canvas timeline.
