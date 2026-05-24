@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Stage 4: captions - burns top-level screenplay.captions[] entries onto a
-// single centered bottom strip, one PNG per entry (via deskagent text-png).
-// Entries may not overlap in time (single shared strip).
+// Stage 4: captions - burns top-level screenplay.captions[] entries onto the
+// canvas, one PNG per entry (via deskagent text-png). Each entry places at
+// `y` (canvas-height fraction, default 0.88 = bottom strip) and `align`
+// (center/left/right) or an explicit `x` center fraction. Two captions may
+// overlap in time only if they sit at different positions.
 // Schema reference: references/desktop.md#captions.
 // Input [afterZoom] → Output [afterCaptions].
 
@@ -23,8 +25,9 @@ function generate(ctx, { inputLabel = "[afterZoom]" } = {}) {
     return passThrough(inputLabel, "[afterCaptions]");
   }
   const H = ctx.composition.canvasH;
+  const W = ctx.composition.canvasW;
   const fontSize = Math.max(MIN_FONT_SIZE, Math.round(H * FONT_SIZE_FRACTION));
-  const bottomY = Math.round(H * CAPTION_Y_FRACTION);
+  const marginX = Math.round(W * 0.05);
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "deskagent-captions-"));
   registerTmpCleanup(tmpDir);
@@ -50,8 +53,13 @@ function generate(ctx, { inputLabel = "[afterZoom]" } = {}) {
     const png = pngByText.get(c.text);
     const idx = inputIndexByPng.get(png);
     const next = `cap${i}`;
+    const yExpr = `${Math.round(H * c.y)}-h`;            // caption bottom edge at y*H
+    const xExpr = c.xFrac != null ? `${Math.round(W * c.xFrac)}-w/2`
+                : c.align === "left"  ? `${marginX}`
+                : c.align === "right" ? `W-w-${marginX}`
+                : `(W-w)/2`;
     filters.push(
-      `[${last}][\${capInput${idx}}:v]overlay=x='(W-w)/2':y='${bottomY}-h':` +
+      `[${last}][\${capInput${idx}}:v]overlay=x='${xExpr}':y='${yExpr}':` +
       `enable='between(t,${c.startSec.toFixed(3)},${c.endSec.toFixed(3)})'[${next}]`,
     );
     last = next;
@@ -89,6 +97,12 @@ function resolveCaptions(ctx) {
       fatal(`${label}: provide either toAction or durationMs`);
     }
     if (endSec <= startSec) fatal(`${label}: end (${endSec.toFixed(3)}s) <= start (${startSec.toFixed(3)}s)`);
+    const y = c.y != null ? Number(c.y) : CAPTION_Y_FRACTION;
+    if (!Number.isFinite(y) || y < 0 || y > 1) fatal(`${label}: y must be a 0..1 canvas-height fraction`);
+    const align = c.align != null ? String(c.align) : "center";
+    if (!["center", "left", "right"].includes(align)) fatal(`${label}: align must be center|left|right`);
+    const xFrac = c.x != null ? Number(c.x) : null;
+    if (xFrac != null && (!Number.isFinite(xFrac) || xFrac < 0 || xFrac > 1)) fatal(`${label}: x must be a 0..1 canvas-width fraction`);
     // Non-fatal (speedups may shift timing) but usually a mistuned duration.
     const sharedEnd = ctx.shared?.durationSec;
     if (Number.isFinite(sharedEnd) && endSec > sharedEnd + 0.5) {
@@ -96,19 +110,27 @@ function resolveCaptions(ctx) {
         `warn: ${label} "${c.text}" ends at ${endSec.toFixed(2)}s but the shared recording window is ${sharedEnd.toFixed(2)}s; caption may be truncated.\n`,
       );
     }
-    out.push({ text: c.text, startSec, endSec, index: i });
+    out.push({ text: c.text, startSec, endSec, index: i, y, align, xFrac });
   });
-  // Single shared strip - overlapping entries would stack illegibly, so
-  // refuse rather than render a mess.
-  const sorted = [...out].sort((a, b) => a.startSec - b.startSec);
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = sorted[i - 1], cur = sorted[i];
-    if (cur.startSec < prev.endSec - 1e-3) {
-      fatal(
-        `captions[${prev.index}] "${prev.text}" [${prev.startSec.toFixed(2)}s..${prev.endSec.toFixed(2)}s] ` +
-        `overlaps captions[${cur.index}] "${cur.text}" [${cur.startSec.toFixed(2)}s..${cur.endSec.toFixed(2)}s]. ` +
-        `Shorten the first with endDelayMs/durationMs or push the second with startDelayMs.`,
-      );
+  // Captions that share a position would stack illegibly, so refuse a
+  // time-overlap there. Different positions can coexist (e.g. a top label
+  // over a bottom subtitle), so group by position before checking.
+  const groups = new Map();
+  for (const c of out) {
+    const key = `${c.y}|${c.align}|${c.xFrac}`;
+    (groups.get(key) ?? groups.set(key, []).get(key)).push(c);
+  }
+  for (const group of groups.values()) {
+    const sorted = group.sort((a, b) => a.startSec - b.startSec);
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1], cur = sorted[i];
+      if (cur.startSec < prev.endSec - 1e-3) {
+        fatal(
+          `captions[${prev.index}] "${prev.text}" [${prev.startSec.toFixed(2)}s..${prev.endSec.toFixed(2)}s] ` +
+          `overlaps captions[${cur.index}] "${cur.text}" [${cur.startSec.toFixed(2)}s..${cur.endSec.toFixed(2)}s] ` +
+          `at the same position. Shorten the first (endDelayMs/durationMs), push the second (startDelayMs), or move one (y/align/x).`,
+        );
+      }
     }
   }
   return out;

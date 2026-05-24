@@ -131,9 +131,14 @@ Two synthetic overlays on top of the composed canvas:
      speed) - so `move` is the "point the viewer's eye at X" beat;
    - **`move`/`pointer_move` with a `path`** → the polyline is spread across
      the duration and interpolated **linearly** (constant speed), so shapes/
-     trajectories trace smoothly.
-   A pointing-hand sprite (`--type pointing`) replaces the arrow for ~220 ms
-   around each **click** (moves/pointer events don't swap or ripple).
+     trajectories trace smoothly. The sprite trace is downsampled to ≤24 points
+     per path (the cursor overlay's x/y is one ffmpeg expression term per
+     waypoint, which has a practical size ceiling); the underlying draw/driver
+     still used the full-resolution path.
+   The cursor path is a flat-sum expression (one ramped term per segment), not
+   nested - so density doesn't blow the parser. A pointing-hand sprite
+   (`--type pointing`) replaces the arrow for ~220 ms around each **click**
+   (moves/pointer events don't swap or ripple).
 2. **Click ripple.** A procedural soft expanding-ring sprite (alpha .mov
    generated once via `ffmpeg ... geq`) overlay'd at each click position
    with `-itsoffset <click.t>` so each click plays its own copy. Clicks only.
@@ -259,11 +264,14 @@ Output label: `[afterZoom]`.
 
 Reads `screenplay.captions[]` (top-level directive array - see
 [`desktop.md`](./desktop.md#captions)). Each entry's text is rendered to a
-transparent PNG via `deskagent text-png` and overlay'd at a single
-centered bottom strip on the canvas with `enable=between(t, ...)`.
+transparent PNG via `deskagent text-png` and overlay'd with
+`enable=between(t, ...)` at its position: `y` (canvas-height fraction, default
+0.88 = bottom), `align` (`center`/`left`/`right`) or an explicit `x` center
+fraction.
 
-Caption entries may not overlap in time (single shared strip) - overlap
-is a hard error.
+Two captions may overlap in time only if they sit at **different** positions
+(e.g. a top label over a bottom subtitle); a same-position time-overlap is a
+hard error.
 
 Output label: `[afterCaptions]`.
 

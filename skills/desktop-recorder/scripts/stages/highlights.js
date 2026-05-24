@@ -134,9 +134,9 @@ function generate(ctx, { inputLabel = "[afterCompose]" } = {}) {
   // cursor would otherwise sit parked (often off the panned view) and
   // distract. Hide it there. (follow_cursor zoom is the tool for
   // click-driven camera; pan and clicks shouldn't overlap.)
-  const cp = cursorPathExpressions(waypoints.map((c) => ({
-    tStart: c.tStart, canvasX: c.canvasX, canvasY: c.canvasY,
-  })));
+  // Pass full waypoints (keep linear/glideSec so path points stay linear and
+  // moves honor their duration); cursor-path ignores extra fields.
+  const cp = cursorPathExpressions(waypoints);
   // Pointer-hand fires only at clicks, never at plain moves. "0" (never) keeps
   // the enable expressions valid when a demo has moves but no clicks.
   const pointerWindows = clicks.length

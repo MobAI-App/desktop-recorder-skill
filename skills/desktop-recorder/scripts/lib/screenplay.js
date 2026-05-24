@@ -178,10 +178,20 @@ function loadContext({ recordingDir, screenplayPath, timelinePath }) {
       if (Array.isArray(e.path) && e.path.length > 0) {
         // Trajectory: distribute the polyline across [tStart, tEnd]. Point 0
         // is reached by a normal eased glide; the rest are linear (constant
-        // speed along the path).
-        const n = e.path.length;
+        // speed along the path). Each waypoint is one term in the cursor
+        // overlay's x/y expression; ffmpeg's overlay eval falls over once the
+        // whole-timeline expression gets too large (~tens of terms), so cap per
+        // path. The driver drew the full-resolution path; this only coarsens
+        // the sprite's trace.
+        const PATH_MAX = 24;
+        let pts = e.path;
+        if (pts.length > PATH_MAX) {
+          pts = Array.from({ length: PATH_MAX }, (_, k) =>
+            e.path[Math.round((k * (e.path.length - 1)) / (PATH_MAX - 1))]);
+        }
+        const n = pts.length;
         const span = Math.max(0.001, e.tEnd - e.tStart);
-        e.path.forEach((p, j) => {
+        pts.forEach((p, j) => {
           const [px, py] = pointToCanvasPixel({ x: p.x, y: p.y, coordinate_space: space, sceneId: e.sceneId });
           out.push({
             tStart: e.tStart + (n === 1 ? 0 : (j / (n - 1)) * span),

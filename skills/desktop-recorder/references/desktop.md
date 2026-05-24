@@ -295,13 +295,15 @@ post-offset envelope). Overlapping entries are a hard error.
     "endDelayMs":   -100 },
   { "text":         "Then plus",
     "fromAction":   "plus/0",
-    "durationMs":   800 }             // OR durationMs (mutually exclusive with toAction)
+    "durationMs":   800,              // OR durationMs (mutually exclusive with toAction)
+    "y":            0.10,             // optional position (see below)
+    "align":        "center" }
 ]
 ```
 
-Captions are drawn at the bottom of the canvas in a single centered
-strip, rendered via `deskagent text-png` (CoreText, sidesteps the missing
-`drawtext` in some ffmpeg builds). One caption visible at a time.
+Captions render via `deskagent text-png` (CoreText, sidesteps the missing
+`drawtext` in some ffmpeg builds). Default position is a centered bottom
+strip; `y`/`align`/`x` move individual entries.
 
 | Field | Required | Notes |
 |---|---|---|
@@ -311,10 +313,15 @@ strip, rendered via `deskagent text-png` (CoreText, sidesteps the missing
 | `toAction` | conditional | Action ID that anchors the end. Mutually exclusive with `durationMs`. |
 | `endDelayMs` | no | Signed offset on the end (only with `toAction`). Default `0`. |
 | `durationMs` | conditional | Duration from the start. Mutually exclusive with `toAction`. |
+| `y` | no | Canvas-height fraction `0..1` for the caption's bottom edge. Default `0.88` (bottom strip); `~0.10` = top. |
+| `align` | no | `center` (default) / `left` / `right` - horizontal placement with a 5% margin. |
+| `x` | no | Canvas-width fraction `0..1` for the caption's horizontal center. Overrides `align` when set. |
 
-Validation: caption entries may **not** overlap in time (single shared
-strip). Overlapping entries are a hard error - author shortens the first
-with `endDelayMs`/`durationMs` or pushes the second with `startDelayMs`.
+Validation: two captions may **not** overlap in time **at the same
+position** (they'd stack illegibly). Different positions can coexist (e.g. a
+top label over a bottom subtitle). For a same-position clash, shorten the
+first (`endDelayMs`/`durationMs`), push the second (`startDelayMs`), or move
+one (`y`/`align`/`x`).
 
 ### `highlights`
 

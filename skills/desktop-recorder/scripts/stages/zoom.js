@@ -54,8 +54,7 @@ function generate(ctx, { inputLabel = "[afterHighlights]" } = {}) {
       // Same cursor-path waypoints highlights uses (clicks + moves), so the
       // camera stays glued to the synthetic sprite.
       const wp = ctx.cursorWaypointsInCanvasSeconds()
-        .filter((e) => e.tStart >= range.tStart && e.tStart < range.tEnd)
-        .map((e) => ({ tStart: e.tStart, canvasX: e.canvasX, canvasY: e.canvasY }));
+        .filter((e) => e.tStart >= range.tStart && e.tStart < range.tEnd);
       if (wp.length === 0) {
         fatal(`${label}: follow_cursor requires at least one click or move event in [${z.fromAction}, ${z.toAction})`);
       }

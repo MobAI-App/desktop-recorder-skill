@@ -18,6 +18,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   cursor - e.g. hide it during a scroll, reveal it before the next click.
 - **Trajectory cursor**: `move` / `pointer_move` with a `path` traces a polyline;
   shapes compile to a polyline (the timeline only carries points).
+- **Caption positioning**: per-caption `y` (canvas-height fraction, default
+  bottom) and `align` (`center`/`left`/`right`) or explicit `x`. Time-overlap is
+  only rejected when captions share a position, so a top label and a bottom
+  subtitle can coexist.
 
 ### Changed
 - Cursor sprite and `zoom.follow_cursor` now follow a **unified pointer track**

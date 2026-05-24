@@ -205,10 +205,21 @@ async function main() {
     return c;
   }
   // Carries the current button state, so a held button makes this a drag.
+  // Densify ~6px between consecutive points: a sparse path (e.g. a 2-point
+  // line) must emit enough move events for the page to draw incrementally,
+  // otherwise the stroke jumps straight to the end and pops in fully drawn.
   async function hoverAlong(path, durationMs) {
-    const stepMs = durationMs / Math.max(1, path.length - 1);
-    for (const p of path) {
-      const css = [p.x, p.y - chromeH];
+    const dense = [[path[0].x, path[0].y - chromeH]];
+    for (let i = 1; i < path.length; i++) {
+      const prev = [path[i - 1].x, path[i - 1].y - chromeH];
+      const cur  = [path[i].x, path[i].y - chromeH];
+      const steps = Math.max(1, Math.round(Math.hypot(cur[0] - prev[0], cur[1] - prev[1]) / 6));
+      for (let s = 1; s <= steps; s++) {
+        dense.push([prev[0] + (cur[0] - prev[0]) * s / steps, prev[1] + (cur[1] - prev[1]) * s / steps]);
+      }
+    }
+    const stepMs = durationMs / Math.max(1, dense.length - 1);
+    for (const css of dense) {
       await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: css[0], y: css[1], buttons });
       lastCss = css;
       await sleep(stepMs);
