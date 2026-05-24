@@ -1,0 +1,7 @@
+node_modules/
+out/
+# the recording you drop in is not part of the template
+public/rec.*
+public/recording.manifest.json
+public/timeline.json
+public/screenplay.json

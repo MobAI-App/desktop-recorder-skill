@@ -202,6 +202,7 @@ node scripts/stages/zoom.js generate <recDir> <screenplay> <timeline> --apply in
 - `references/timeline.md` - timeline event schema (scene_start / action / scene_end)
 - `references/editing.md` - export orchestrator + per-stage modules (compose / highlights / zoom / captions / speedups); cursor track + `cursor.hide/show`
 - `references/web-driver.md` - CDP web driver (`drive-web.js`): drive browser page content focus-free; trajectory/pointer actions; draw on web canvases
+- `remotion-template/` - optional Remotion bridge: turn a recording (`manifest`+`timeline`+`screenplay`) into React motion graphics. The bridge (`loadRecording` + `<RecordingCard>`/`<Cursor>`/`<ClickRipple>`/`<Caption>`) does the integration; you only write the creative composition. See its `README.md`.
 
 ## Authorization rule
 

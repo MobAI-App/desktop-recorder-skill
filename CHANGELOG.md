@@ -22,6 +22,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   bottom) and `align` (`center`/`left`/`right`) or explicit `x`. Time-overlap is
   only rejected when captions share a position, so a top label and a bottom
   subtitle can coexist.
+- **Remotion bridge** (`remotion-template/`): optional React motion-graphics
+  path alongside the ffmpeg `export.js`. `loadRecording()` turns the recording
+  contract (`manifest` + `timeline` + `screenplay`) into frame-indexed props;
+  components `<RecordingStage>` / `<RecordingCard>` / `<Cursor>` /
+  `<ClickRipple>` / `<Caption>` do the integration (cursor/ripples are
+  timeline-driven in React, no ffmpeg-expression limits). A `speed` knob scales
+  duration + event frames and feeds `playbackRate`. The agent writes only the
+  creative composition; the user supplies the Remotion runtime.
 
 ### Changed
 - Cursor sprite and `zoom.follow_cursor` now follow a **unified pointer track**
