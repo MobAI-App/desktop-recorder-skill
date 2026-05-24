@@ -25,8 +25,11 @@ type ActionEvent = SceneBoundary & {
   action:       "click" | "double_click" | "drag"
               | "type"  | "key"          | "scroll"
               | "wait"  | "move"
-  x?: number               // CG screen points in coordinate_space
+              | "pointer_down" | "pointer_move" | "pointer_up"
+  x?: number               // CG points in coordinate_space (window/screen)
   y?: number
+  path?: { x: number, y: number }[]   // trajectory polyline (move/pointer_move);
+                                       // the cursor track follows it (linear)
 }
 ```
 

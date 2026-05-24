@@ -3,6 +3,13 @@
 Native macOS recorder + deterministic input replayer + AX/OCR inspector.
 ScreenCaptureKit captures occluded/minimized windows. macOS only.
 
+**WebView/browser caveat:** capture works while occluded, but apps with
+web content (Chrome, Safari, Electron, Wails) throttle timers, `rAF`, and
+repaints when the window is *fully* occluded (Page Visibility / occlusion
+throttling). The clip then shows stalled animations or stale content.
+Keep such windows **at least partially visible** during the take. Native
+AppKit windows are unaffected.
+
 | Subcommand | Purpose |
 |---|---|
 | `list` | Enumerate displays + windows (id, pid, x/y, title, onScreen). |
@@ -221,13 +228,20 @@ Action kinds:
 | Action | Required | Optional |
 |---|---|---|
 | `wait` | `ms` | - |
-| `move` | `x`, `y` | `duration_ms` (interpolate if > 0) |
-| `click` | `x`, `y` | `button` (`left`/`right`) |
+| `move` | `x`, `y` (or `path`) | `duration_ms`; `path` (polyline `[{x,y}…]`) to glide a trajectory |
+| `click` | `x`, `y` | `button` (`left`/`right`/`middle`) |
 | `double_click` | `x`, `y` | `button` |
-| `drag` | `x`, `y`, `to_x`, `to_y` | `duration_ms` (default 400) |
+| `drag` | `x`, `y`, `to_x`, `to_y` | `duration_ms` (default 400); `button` |
+| `pointer_down` | `x`, `y` | `button` - press and hold (held moves then drag) |
+| `pointer_move` | `x`, `y` (or `path`) | `duration_ms`; `path` - move while held = a drawn stroke |
+| `pointer_up` | - | `x`, `y` (default: current position); `button` |
 | `type` | `text` | `cpm` (chars/minute; overrides default cadence - ~7500 cpm HID, ~3750 cpm per-pid; posts Unicode via `keyboardSetUnicodeString`) |
-| `key` | `combo` | - (`cmd+s`, `shift+tab`, `escape`, …) |
+| `key` | `combo` | - (`cmd+s`, `shift+tab`, `escape`, `f1`-`f12`, `home`, `end`, `pageup`, `pagedown`, arrows, …) |
 | `scroll` | - | `dx`, `dy` (line-based wheel deltas) |
+
+`pointer_down → pointer_move(path) → pointer_up` is one continuous stroke -
+draw lines/circles/bezier by sampling the curve into `path` points. The same
+actions run in the web driver (CDP) - see [`web-driver.md`](./web-driver.md).
 
 `coordinate_space: "window"` is the agent default - pair with
 `deskagent inspect`'s window-relative coords for portability.

@@ -122,13 +122,21 @@ Output label: `[afterCompose]` (carries alpha).
 Two synthetic overlays on top of the composed canvas:
 
 1. **Cursor sprite.** An arrow (via `deskagent cursor-png --type arrow`)
-   drawn at a piecewise cursor-path expression that eases between click
-   positions (cubic ease-in/out, ≤0.55 s per move at ~1400 px/s baseline).
-   A pointing-hand sprite (`--type pointing`) replaces the arrow for
-   ~220 ms around each click, so the cursor visibly "presses".
+   drawn along the **pointer track** - the unified timeline of every
+   positional action (`click`, `move`, `drag`, `pointer_*`), via
+   `cursorWaypointsInCanvasSeconds`. Segment easing depends on the waypoint:
+   - **click** → auto pre-arrival glide (cubic ease, ≤0.55 s at ~1400 px/s),
+     arriving exactly at the click so the ripple lands on a still cursor;
+   - **move** → glides over the action's own `duration_ms` (author-controlled
+     speed) - so `move` is the "point the viewer's eye at X" beat;
+   - **`move`/`pointer_move` with a `path`** → the polyline is spread across
+     the duration and interpolated **linearly** (constant speed), so shapes/
+     trajectories trace smoothly.
+   A pointing-hand sprite (`--type pointing`) replaces the arrow for ~220 ms
+   around each **click** (moves/pointer events don't swap or ripple).
 2. **Click ripple.** A procedural soft expanding-ring sprite (alpha .mov
    generated once via `ffmpeg ... geq`) overlay'd at each click position
-   with `-itsoffset <click.t>` so each click plays its own copy.
+   with `-itsoffset <click.t>` so each click plays its own copy. Clicks only.
 
 User overrides on `screenplay.highlights`:
 
@@ -160,14 +168,24 @@ User overrides on `screenplay.highlights`:
 | `cursor.hotspotArrow` | no | `[x, y]` in sprite pixels - the pixel that should land EXACTLY on the click point. Default `[0, 0]` (matches the default arrow whose tip is top-left). Required for custom PNGs whose tip isn't at the corner. |
 | `cursor.hotspotPointing` | no | Same idea for the pointing sprite. Defaults to `hotspotArrow`. |
 
+**Cursor visibility** - `screenplay.cursor` gates the sprite:
+
+- `cursor.hide: [ {fromAction,toAction,startDelayMs?,endDelayMs?}, … ]` - cursor
+  invisible inside these ranges (e.g. hide it during a scroll).
+- `cursor.show: [ … ]` - whitelist; if present the cursor is visible ONLY in
+  these ranges.
+
+Both compose with the automatic pan-range hiding. End a `hide` range a beat
+before the next click and the cursor reappears mid-glide toward it.
+
 Implementation notes:
 
-- Arrow's `enable=` is the boolean-NOT of all click windows; pointing's
-  `enable=` is the OR. Same path expression for both, so swap is
-  seamless.
-- The cursor path is shared with `zoom`'s `follow_cursor: true` via
-  `lib/cursor-path.js` - camera centers on the sprite's actual position,
-  no desync during glides.
+- Arrow's `enable=` is `not(click windows) * not(pan ranges) * visibility
+  gates`; pointing's is `(click windows) * gates`. Same path expression for
+  both, so the swap is seamless.
+- The pointer track is shared with `zoom`'s `follow_cursor: true` via
+  `lib/cursor-path.js` - the camera centers on the sprite's actual position
+  (clicks **and** moves), no desync during glides.
 - Procedural ripple sprite is cached to
   `~/.cache/deskagent-skill/ripple-{size}-{durSec}-{color}.mov`; only
   the first export of a given configuration pays the geq render cost.
@@ -184,7 +202,9 @@ comes from one of three sources (mutually exclusive):
 - **Static center** - `x`/`y` on the entry, or the first action with
   coords in range.
 - **Follow cursor** - `follow_cursor: true`. Camera centers on the
-  synthetic-cursor path (shared with the highlights stage).
+  synthetic-cursor pointer track (clicks **and** moves) in range - shared with
+  the highlights stage, so camera and sprite never desync. Needs ≥1 click or
+  move in the range.
 - **Pan waypoints** - `pan: [...]`. Explicit list of waypoints
   `{ afterMs, x, y, ease? }`. Camera holds at the segment's start center
   (the entry's `x`/`y` or first action with coords in range), then eases

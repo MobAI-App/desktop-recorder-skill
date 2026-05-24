@@ -200,7 +200,8 @@ node scripts/stages/zoom.js generate <recDir> <screenplay> <timeline> --apply in
 - `references/deskagent.md` - CLI surface, permissions, recording.manifest.json schema
 - `references/desktop.md` - screenplay schema (scenes + composition + captions + zoom + speed + trim), setup normalization, state-fingerprint recipe
 - `references/timeline.md` - timeline event schema (scene_start / action / scene_end)
-- `references/editing.md` - export orchestrator + per-stage modules (compose / highlights / zoom / captions / speedups)
+- `references/editing.md` - export orchestrator + per-stage modules (compose / highlights / zoom / captions / speedups); cursor track + `cursor.hide/show`
+- `references/web-driver.md` - CDP web driver (`drive-web.js`): drive browser page content focus-free; trajectory/pointer actions; draw on web canvases
 
 ## Authorization rule
 
@@ -215,6 +216,7 @@ swap targets or open new tabs / windows / documents.
 |---|---|---|
 | `inspect` returns nothing | Wails/Electron WebView | rely on OCR; AX walk only sees chrome |
 | Capture errors at start | Target window `onScreen: false` | bring it forward; SCK can't always frame-pump occluded windows |
+| Web/browser clip frozen, animations stalled, stale content | Window fully occluded - WebView throttles timers/`rAF`/repaints | keep the window at least partially visible during the take |
 | `screenplay schema_version N not supported` | screenplay was authored for a different deskagent build | re-author to current schema (current: 2) |
 | `compose.js` errors: "manifest has N clips but screenplay has no \`composition\`" | multi-clip recording lacks composition | add `composition.canvas` + `composition.elements[]` to screenplay |
 | `captions[i] overlaps captions[j]` | two caption entries cover the same time range | shorten the first with `endDelayMs`/`durationMs` or push the second with `startDelayMs` |
@@ -224,16 +226,28 @@ swap targets or open new tabs / windows / documents.
 
 ## Chromium-based browsers (Chrome, Edge, Brave, Arc)
 
-`--background` reaches only the browser chrome (Back/Reload/tabs); page
-DOM lives in an out-of-process renderer that AX/per-pid events don't
-reach. For page-content demos, record with `--no-cursor` and drive
-with `--target-window` (HID mode) - the user's cursor moves during the
-take, but the highlights stage's synthetic cursor sprite keeps the video
-clean.
+**For page content, prefer the CDP web driver** (`scripts/drive-web.js`) over
+`deskagent control` - it injects input at the renderer, so it needs **no focus
+and no foreground** (drive an unfocused window while recording), targets the
+**DOM by selector** (no pixel-guessing / mis-clicks), and emits the same
+`timeline.json` so record + export are unchanged. It replaces `control` for
+browser scenes; full setup (launch flags, actions, coordinates) in
+[`references/web-driver.md`](./references/web-driver.md). Use `deskagent
+control` only for the browser's own UI (omnibox, tabs, extensions, menus) -
+CDP can't reach those.
 
-For Chrome element discovery: OCR is more reliable than AX. Navigate
-via URL bar (`cmd+l` → type → `return`) is more deterministic than
-chasing SPA nav links.
+Fallback (no debug Chrome): `deskagent control` HID mode reaches only the
+browser chrome via `--background`; for page content record with `--no-cursor`
+and drive with `--target-window` (HID, cursor moves during the take). OCR beats
+AX for Chrome element discovery; URL-bar nav (`cmd+l` → type → `return`) beats
+chasing SPA links.
+
+Keep the browser window **at least partially visible** during the take.
+When fully occluded, the renderer throttles timers / `rAF` / repaints
+(Page Visibility), so the clip captures stalled animations or stale
+content - even though SCK is still pulling frames. (Launch Chrome with the
+`--disable-*backgrounding*` / throttling flags - see web-driver.md - to keep an
+unfocused window compositing.)
 
 ## Out of scope
 

@@ -71,6 +71,7 @@ function loadContext({ recordingDir, screenplayPath, timelinePath }) {
         actionIndex: e.action_index,
         action:      e.action,
         x: e.x, y: e.y,
+        path: e.path,   // optional polyline (window coords) for trajectory moves
         coordinateSpace: e.coordinate_space,
         tStart: (e.startedAtWallclockMs - t0WallMs) / 1000,
         tEnd:   (e.endedAtWallclockMs   - t0WallMs) / 1000,
@@ -164,6 +165,45 @@ function loadContext({ recordingDir, screenplayPath, timelinePath }) {
       .sort((a, b) => a.tStart - b.tStart);
   }
 
+  // Unified pointer track: EVERY positional event (click, move, drag,
+  // pointer_*) is a cursor waypoint. The synthetic cursor follows the whole
+  // track; ripple/pointer-hand are a separate click-only concern. A `move`
+  // with a `path` expands into a linear-interpolated polyline (trajectory /
+  // shape) spread across its duration. Consumed by the highlights cursor
+  // sprite and the zoom follow_cursor camera so they stay in sync.
+  function cursorWaypointsInCanvasSeconds() {
+    const out = [];
+    for (const e of actionEvents.values()) {
+      const space = e.coordinateSpace;
+      if (Array.isArray(e.path) && e.path.length > 0) {
+        // Trajectory: distribute the polyline across [tStart, tEnd]. Point 0
+        // is reached by a normal eased glide; the rest are linear (constant
+        // speed along the path).
+        const n = e.path.length;
+        const span = Math.max(0.001, e.tEnd - e.tStart);
+        e.path.forEach((p, j) => {
+          const [px, py] = pointToCanvasPixel({ x: p.x, y: p.y, coordinate_space: space, sceneId: e.sceneId });
+          out.push({
+            tStart: e.tStart + (n === 1 ? 0 : (j / (n - 1)) * span),
+            canvasX: px, canvasY: py,
+            linear: j > 0,
+            action: e.action,
+          });
+        });
+        continue;
+      }
+      if (e.x == null || e.y == null) continue;
+      const [px, py] = pointToCanvasPixel(e);
+      // A move/drag glides over its own duration (author-controlled speed);
+      // a click uses the auto pre-arrival travel (glideSec undefined) so the
+      // ripple lands on a stationary cursor.
+      const isClick = e.action === "click" || e.action === "double_click";
+      const glideSec = isClick ? undefined : Math.max(0, e.tEnd - e.tStart);
+      out.push({ ...e, canvasX: px, canvasY: py, glideSec });
+    }
+    return out.sort((a, b) => a.tStart - b.tStart);
+  }
+
   return {
     recordingDir,
     manifest,
@@ -180,6 +220,7 @@ function loadContext({ recordingDir, screenplayPath, timelinePath }) {
     placementForClip,
     resolveActionRange,
     clickEventsInCanvasSeconds,
+    cursorWaypointsInCanvasSeconds,
   };
 }
 

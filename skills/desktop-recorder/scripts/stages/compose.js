@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stage 1: compose — places per-source clips on the canvas background.
+// Stage 1: compose - places per-source clips on the canvas background.
 // Output label: [afterCompose] (carries alpha).
 //
 //   node stages/compose.js generate <recordingDir> <screenplay> <timeline> [--apply <out.mov>]

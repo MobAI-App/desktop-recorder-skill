@@ -1,51 +1,73 @@
 // Shared cursor-path math. Both the highlights stage (cursor sprite) and
 // the zoom stage (follow_cursor center) consume the SAME piecewise
-// expression so the zoom camera tracks the synthetic cursor exactly,
-// not the raw click events.
+// expression so the zoom camera tracks the synthetic cursor exactly.
 //
-// Model: at each transition click[i] → click[i+1], hold at click[i] until
-//   moveStart = click[i+1].t - travelDur
-// then ease cubic-in/out to click[i+1] arriving exactly at click[i+1].t.
-//   travelDur = min(distance / TRAVEL_SPEED_PXPS, gap * 0.9, TRAVEL_DUR_MAX)
-// Before clicks[0].t: hold at clicks[0]. After clicks[last].t: hold at last.
+// Waypoints are { tStart, canvasX, canvasY, glideSec? } in canvas seconds.
+// Two transition models, chosen per destination waypoint b:
+//
+//   • glideSec set (a `move` carrying an explicit duration): glide DURING the
+//     move's own window - hold at a until b.tStart, ease to b over glideSec.
+//     This is what the move action exposes, so the author controls the speed.
+//
+//   • glideSec absent (a click): glide BEFORE arrival - hold at a until
+//     b.tStart - travel, then ease in, arriving exactly at b.tStart so the
+//     ripple/pointer-hand land on a stationary cursor. travel is auto:
+//     min(distance / TRAVEL_SPEED, gap*0.9, TRAVEL_DUR_MAX).
+//
+// Before pts[0].tStart: hold at pts[0]. After the last: hold at last.
 
 const TRAVEL_SPEED_PXPS = 1400;
 const TRAVEL_DUR_MAX    = 0.55;
 
-// `clicks` is an array of { tStart, canvasX, canvasY } in canvas seconds.
-// Returns { xExpr, yExpr } - ffmpeg expressions over t.
-function cursorPathExpressions(clicks) {
-  if (clicks.length === 0) return { xExpr: "0", yExpr: "0" };
-  if (clicks.length === 1) {
+function cursorPathExpressions(pts) {
+  if (pts.length === 0) return { xExpr: "0", yExpr: "0" };
+  if (pts.length === 1) {
     return {
-      xExpr: String(Math.round(clicks[0].canvasX)),
-      yExpr: String(Math.round(clicks[0].canvasY)),
+      xExpr: String(Math.round(pts[0].canvasX)),
+      yExpr: String(Math.round(pts[0].canvasY)),
     };
   }
 
-  // Build right-to-left; "after last click" hold falls through as the
-  // outer-else case.
-  let xExpr = String(clicks[clicks.length - 1].canvasX);
-  let yExpr = String(clicks[clicks.length - 1].canvasY);
-  for (let i = clicks.length - 2; i >= 0; i--) {
-    const a = clicks[i];
-    const b = clicks[i + 1];
-    const dx = b.canvasX - a.canvasX;
-    const dy = b.canvasY - a.canvasY;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const gap  = Math.max(0.001, b.tStart - a.tStart);
-    // Floor travel so coincident clicks (dist=0) don't divide by zero below.
-    const travel = Math.max(0.001, Math.min(dist / TRAVEL_SPEED_PXPS, gap * 0.9, TRAVEL_DUR_MAX));
-    const moveStart = b.tStart - travel;
-    const u     = `((t-${moveStart})/${travel})`;
-    const eased = `if(lt(${u},0.5),4*pow(${u},3),1-pow(-2*${u}+2,3)/2)`;
+  let xExpr = String(pts[pts.length - 1].canvasX);
+  let yExpr = String(pts[pts.length - 1].canvasY);
+  for (let i = pts.length - 2; i >= 0; i--) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const gap = Math.max(0.001, b.tStart - a.tStart);
+
+    let glideStart, glideEnd, linear = false;
+    if (b.linear) {
+      // A point along a trajectory (move.path / shape): constant-speed lerp
+      // over the whole inter-sample interval, so the polyline traces smoothly.
+      glideStart = a.tStart;
+      glideEnd = b.tStart;
+      linear = true;
+    } else if (b.glideSec != null && b.glideSec > 0.001) {
+      // Glide over the move's own window: hold at a until b starts, then ease
+      // to b over the move's duration.
+      glideStart = b.tStart;
+      glideEnd = b.tStart + Math.max(0.05, b.glideSec);
+    } else {
+      const dx = b.canvasX - a.canvasX;
+      const dy = b.canvasY - a.canvasY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const travel = Math.max(0.001, Math.min(dist / TRAVEL_SPEED_PXPS, gap * 0.9, TRAVEL_DUR_MAX));
+      glideStart = b.tStart - travel;
+      glideEnd = b.tStart;
+    }
+
+    const dur = Math.max(0.001, glideEnd - glideStart);
+    const u     = `((t-${glideStart.toFixed(3)})/${dur.toFixed(3)})`;
+    const eased = linear
+      ? `min(1,max(0,${u}))`
+      : `if(lt(${u},0.5),4*pow(${u},3),1-pow(-2*${u}+2,3)/2)`;
     const xLerp = `(${a.canvasX}+(${b.canvasX}-${a.canvasX})*(${eased}))`;
     const yLerp = `(${a.canvasY}+(${b.canvasY}-${a.canvasY})*(${eased}))`;
-    xExpr = `if(lt(t,${b.tStart}),if(lt(t,${moveStart}),${a.canvasX},${xLerp}),${xExpr})`;
-    yExpr = `if(lt(t,${b.tStart}),if(lt(t,${moveStart}),${a.canvasY},${yLerp}),${yExpr})`;
+    xExpr = `if(lt(t,${glideEnd.toFixed(3)}),if(lt(t,${glideStart.toFixed(3)}),${a.canvasX},${xLerp}),${xExpr})`;
+    yExpr = `if(lt(t,${glideEnd.toFixed(3)}),if(lt(t,${glideStart.toFixed(3)}),${a.canvasY},${yLerp}),${yExpr})`;
   }
-  xExpr = `if(lt(t,${clicks[0].tStart}),${clicks[0].canvasX},${xExpr})`;
-  yExpr = `if(lt(t,${clicks[0].tStart}),${clicks[0].canvasY},${yExpr})`;
+  xExpr = `if(lt(t,${pts[0].tStart.toFixed(3)}),${pts[0].canvasX},${xExpr})`;
+  yExpr = `if(lt(t,${pts[0].tStart.toFixed(3)}),${pts[0].canvasY},${yExpr})`;
   return { xExpr, yExpr };
 }
 

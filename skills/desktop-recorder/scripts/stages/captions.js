@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stage 4: captions — burns top-level screenplay.captions[] entries onto a
+// Stage 4: captions - burns top-level screenplay.captions[] entries onto a
 // single centered bottom strip, one PNG per entry (via deskagent text-png).
 // Entries may not overlap in time (single shared strip).
 // Schema reference: references/desktop.md#captions.
@@ -98,7 +98,7 @@ function resolveCaptions(ctx) {
     }
     out.push({ text: c.text, startSec, endSec, index: i });
   });
-  // Single shared strip — overlapping entries would stack illegibly, so
+  // Single shared strip - overlapping entries would stack illegibly, so
   // refuse rather than render a mess.
   const sorted = [...out].sort((a, b) => a.startSec - b.startSec);
   for (let i = 1; i < sorted.length; i++) {

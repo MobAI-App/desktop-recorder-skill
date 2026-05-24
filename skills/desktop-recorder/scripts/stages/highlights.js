@@ -46,8 +46,9 @@ const DEFAULT_CURSOR_SIZE    = 64;
 const POINTER_WINDOW_MS      = 220;  // how long pointer sprite is shown around click
 
 function generate(ctx, { inputLabel = "[afterCompose]" } = {}) {
-  const clicks = ctx.clickEventsInCanvasSeconds();
-  if (clicks.length === 0) {
+  const clicks = ctx.clickEventsInCanvasSeconds();        // ripple + pointer-hand
+  const waypoints = ctx.cursorWaypointsInCanvasSeconds(); // cursor glide path (clicks + moves)
+  if (waypoints.length === 0) {
     return passThrough(inputLabel, "[afterHighlights]");
   }
 
@@ -133,19 +134,35 @@ function generate(ctx, { inputLabel = "[afterCompose]" } = {}) {
   // cursor would otherwise sit parked (often off the panned view) and
   // distract. Hide it there. (follow_cursor zoom is the tool for
   // click-driven camera; pan and clicks shouldn't overlap.)
-  const cp = cursorPathExpressions(clicks.map((c) => ({
+  const cp = cursorPathExpressions(waypoints.map((c) => ({
     tStart: c.tStart, canvasX: c.canvasX, canvasY: c.canvasY,
   })));
-  const pointerWindows = clicks.map((c) =>
-    `between(t,${(c.tStart - POINTER_WINDOW_MS / 2000).toFixed(3)},${(c.tStart + POINTER_WINDOW_MS / 2000).toFixed(3)})`
-  ).join("+");
+  // Pointer-hand fires only at clicks, never at plain moves. "0" (never) keeps
+  // the enable expressions valid when a demo has moves but no clicks.
+  const pointerWindows = clicks.length
+    ? clicks.map((c) =>
+        `between(t,${(c.tStart - POINTER_WINDOW_MS / 2000).toFixed(3)},${(c.tStart + POINTER_WINDOW_MS / 2000).toFixed(3)})`
+      ).join("+")
+    : "0";
   const panRanges = collectPanRanges(ctx);
   const panEnable = panRanges.length
     ? panRanges.map((r) => `between(t,${r.tStart.toFixed(3)},${r.tEnd.toFixed(3)})`).join("+")
     : null;
-  const arrowEnable = panEnable
-    ? `not(${pointerWindows})*not(${panEnable})`
-    : `not(${pointerWindows})`;
+  // Optional cursor visibility control via screenplay.cursor:
+  //   hide: [...]  cursor invisible inside these action ranges (e.g. a scroll)
+  //   show: [...]  whitelist - if present, cursor visible ONLY in these ranges
+  // Both compose with the automatic pan-range hiding. End a hide range a beat
+  // before the next click so the cursor reappears already gliding toward it.
+  const visGates = [];
+  const showEnable = rangesEnable(collectCursorRanges(ctx, "show"));
+  const hideEnable = rangesEnable(collectCursorRanges(ctx, "hide"));
+  if (showEnable) visGates.push(`(${showEnable})`);
+  if (hideEnable) visGates.push(`not(${hideEnable})`);
+  const arrowParts = [`not(${pointerWindows})`];
+  if (panEnable) arrowParts.push(`not(${panEnable})`);
+  arrowParts.push(...visGates);
+  const arrowEnable = arrowParts.join("*");
+  const pointerEnable = [`(${pointerWindows})`, ...visGates].join("*");
   // Subtract hotspot from cursor position so the sprite's hotspot pixel
   // lands on the click coord, not its top-left.
   filters.push(
@@ -154,7 +171,7 @@ function generate(ctx, { inputLabel = "[afterCompose]" } = {}) {
   );
   filters.push(
     `[afterArrow][\${capInput${POINTING_IDX}}:v]overlay=x='${cp.xExpr}-${hpX}':y='${cp.yExpr}-${hpY}':` +
-    `enable='${pointerWindows}'[afterHighlights]`,
+    `enable='${pointerEnable}'[afterHighlights]`,
   );
 
   return {
@@ -177,7 +194,7 @@ function validateSpritePath(p) {
 }
 
 // Cached on (size, durSec, colorHex) so repeated exports skip the geq
-// render — the slowest part of this stage (~3–5 s cold).
+// render - the slowest part of this stage (~3–5 s cold).
 function cachedProceduralRipple(size, durSec, colorHex) {
   const home  = process.env.HOME || os.tmpdir();
   const cache = path.join(home, ".cache", "deskagent-skill");
@@ -260,6 +277,26 @@ function probeWH(file) {
 
 // Resolve [tStart, tEnd] (canvas seconds) for each zoom entry that uses pan
 // waypoints. Used to suppress the cursor sprite during cinematic pans.
+function rangesEnable(ranges) {
+  return ranges.length
+    ? ranges.map((r) => `between(t,${r.tStart.toFixed(3)},${r.tEnd.toFixed(3)})`).join("+")
+    : null;
+}
+
+// Resolve screenplay.cursor.{hide,show}[] action ranges to canvas-second spans.
+function collectCursorRanges(ctx, key) {
+  const cur = ctx.screenplay.cursor;
+  const arr = cur && Array.isArray(cur[key]) ? cur[key] : [];
+  return arr.map((r, i) => {
+    const x = ctx.resolveActionRange({
+      fromAction: r.fromAction, toAction: r.toAction,
+      startDelayMs: r.startDelayMs, endDelayMs: r.endDelayMs,
+      label: `cursor.${key}[${i}]`,
+    });
+    return { tStart: x.tStart, tEnd: x.tEnd };
+  });
+}
+
 function collectPanRanges(ctx) {
   const entries = Array.isArray(ctx.screenplay.zoom) ? ctx.screenplay.zoom : [];
   const out = [];

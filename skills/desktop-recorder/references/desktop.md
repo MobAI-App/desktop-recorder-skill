@@ -87,13 +87,30 @@ timeline-wide concerns and live at the top level.
 ```jsonc
 { "action": "wait",         "ms": 500 }
 { "action": "move",         "x": 1, "y": 2, "duration_ms": 250 }
-{ "action": "click",        "x": 10, "y": 20, "button": "left" }
+{ "action": "click",        "x": 10, "y": 20, "button": "left" }   // button: left | right | middle
 { "action": "double_click", "x": 30, "y": 40 }
-{ "action": "drag",         "x": 0, "y": 0, "to_x": 100, "to_y": 200 }
+{ "action": "drag",         "x": 0, "y": 0, "to_x": 100, "to_y": 200, "button": "left" }  // button optional, default left
 { "action": "type",         "text": "hello", "cpm": 300 }
-{ "action": "key",          "combo": "cmd+s" }
+{ "action": "key",          "combo": "cmd+s" }                      // keys incl. f1-f12, home, end, pageup, pagedown, arrows
 { "action": "scroll",       "dx": 0, "dy": -3 }
+
+// Trajectory move + pointer primitives (draw shapes / compose gestures):
+{ "action": "move", "path": [ {"x":110,"y":130}, {"x":400,"y":130} ], "duration_ms": 600 }   // glide along a polyline
+{ "action": "pointer_down", "x": 110, "y": 130 }                    // press + hold (button optional, default left)
+{ "action": "pointer_move", "path": [ ... ], "duration_ms": 800 }   // move while held = a drawn stroke
+{ "action": "pointer_up" }                                          // release (defaults to current position)
 ```
+
+`move` glides over `duration_ms`; with a `path` it traces that polyline
+(constant speed). `pointer_down` → `pointer_move(path)` → `pointer_up` is one
+continuous stroke - use it to draw lines/circles/bezier (sample the curve into
+a `path`). `drag` is the straight-line shorthand. `click`/`double_click`/`drag`
+take `button`: `left`/`right`/`middle`.
+
+These run identically in native `deskagent control` (CGEvent) and the **web
+driver** (`scripts/drive-web.js`, CDP). The web driver adds page-only actions
+(`navigate`, `wait_for`, `scroll_to`, `scroll_page`, selector/`text` targets,
+`shape` sugar) - see [`web-driver.md`](./web-driver.md).
 
 No `intent` / `caption` / `zoom` fields on actions - those live higher
 up. Action records are pure execution.
@@ -311,6 +328,26 @@ field reference: [`editing.md`](./editing.md#highlights).
   "cursor": { /* see editing.md#highlights */ }
 }
 ```
+
+### `cursor` (visibility)
+
+Controls when the synthetic cursor is drawn. By default the cursor follows the
+pointer track (clicks + moves + pointer events) across the whole video. Use
+`hide`/`show` (action ranges, same `startDelayMs`/`endDelayMs` offsets as other
+directives) to gate it - e.g. hide it during a scroll, then let it reappear
+before the next click.
+
+```jsonc
+"cursor": {
+  "hide": [ { "fromAction": "tour/0", "toAction": "outro/0", "endDelayMs": 1400 } ],
+  "show": [ /* whitelist: if present, cursor is visible ONLY in these ranges */ ]
+}
+```
+
+End a `hide` range a beat before the next click and the cursor reappears
+already gliding toward it (the path is continuous; `hide` only gates
+visibility). Composes with the automatic pan-range hiding. Render-time only -
+not read by `deskagent control`. See [`editing.md`](./editing.md#highlights).
 
 ### `trim` (top-level)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stage 3: zoom — per-frame scale + center crop. Center is static (x/y),
+// Stage 3: zoom - per-frame scale + center crop. Center is static (x/y),
 // follow_cursor (tracks the synthetic cursor), or pan (waypoints).
 // Input [afterHighlights] → Output [afterZoom].
 
@@ -51,21 +51,16 @@ function generate(ctx, { inputLabel = "[afterHighlights]" } = {}) {
       pathExprs = panPathExpressions(range.tStart, startX, startY, waypoints);
       cx = startX; cy = startY;
     } else if (z.follow_cursor) {
-      // Same cursor-path expression highlights uses, so the camera stays
-      // glued to the synthetic sprite.
-      const clicks = [...ctx.actionEvents.values()]
-        .filter((e) => e.action === "click" && e.x != null && e.y != null)
+      // Same cursor-path waypoints highlights uses (clicks + moves), so the
+      // camera stays glued to the synthetic sprite.
+      const wp = ctx.cursorWaypointsInCanvasSeconds()
         .filter((e) => e.tStart >= range.tStart && e.tStart < range.tEnd)
-        .sort((a, b) => a.tStart - b.tStart)
-        .map((e) => {
-          const [px, py] = ctx.pointToCanvasPixel(e);
-          return { tStart: e.tStart, canvasX: px, canvasY: py };
-        });
-      if (clicks.length === 0) {
-        fatal(`${label}: follow_cursor requires at least one click event in [${z.fromAction}, ${z.toAction})`);
+        .map((e) => ({ tStart: e.tStart, canvasX: e.canvasX, canvasY: e.canvasY }));
+      if (wp.length === 0) {
+        fatal(`${label}: follow_cursor requires at least one click or move event in [${z.fromAction}, ${z.toAction})`);
       }
-      pathExprs = cursorPathExpressions(clicks);
-      cx = clicks[0].canvasX; cy = clicks[0].canvasY;
+      pathExprs = cursorPathExpressions(wp);
+      cx = wp[0].canvasX; cy = wp[0].canvasY;
     } else if (z.x != null && z.y != null) {
       [cx, cy] = ctx.pointToCanvasPixel({
         x: Number(z.x), y: Number(z.y),
@@ -97,7 +92,7 @@ function generate(ctx, { inputLabel = "[afterHighlights]" } = {}) {
   const cyExpr = piecewiseCenter(segments, "cy", H / 2);
 
   // crop x/y bounded to [0, scaled - cropSize] so the camera never reveals
-  // black bars at edges. min/max, not clip() — clip() isn't in every
+  // black bars at edges. min/max, not clip() - clip() isn't in every
   // ffmpeg's expression evaluator.
   const S  = `(${sExpr})`;
   const CX = `(${cxExpr})`;
@@ -105,7 +100,7 @@ function generate(ctx, { inputLabel = "[afterHighlights]" } = {}) {
   const cropX = `min(max(${CX}*${S}-${W}/2,0),iw*${S}-${W})`;
   const cropY = `min(max(${CY}*${S}-${H}/2,0),ih*${S}-${H})`;
 
-  // Filter args are single-quoted, so ffmpeg un-quotes before evaluating —
+  // Filter args are single-quoted, so ffmpeg un-quotes before evaluating -
   // commas inside if(...) are already safe; escaping them with \, would
   // break the expression parser on some builds.
   const filterStr =

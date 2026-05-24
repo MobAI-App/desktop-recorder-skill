@@ -58,7 +58,7 @@ function generate(ctx, { inputLabel = "[afterCaptions]" } = {}) {
 
   const inLabel = inputLabel.replace(/^\[|\]$/g, "");
   // Zero-base PTS first so T matches canvas seconds even if an upstream
-  // filter leaks a non-zero start PTS — otherwise the warp slips.
+  // filter leaks a non-zero start PTS - otherwise the warp slips.
   const filters = [
     `[${inLabel}]setpts=PTS-STARTPTS,setpts='(${dst})/TB'[afterSpeedups]`,
   ];
